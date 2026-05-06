@@ -12,8 +12,12 @@ import type { z } from 'zod';
 export interface ToolDefinition<I = unknown, O = unknown> {
   name: string;
   description: string;
-  /** Runtime validator. Mirrors `jsonSchema` for the agent loop's edges. */
-  inputSchema: z.ZodSchema<I>;
+  /**
+   * Runtime validator. Mirrors `jsonSchema` for the agent loop's edges.
+   * Input is `unknown` so schemas with `.default()` (whose accept
+   * `undefined`) typecheck under `exactOptionalPropertyTypes: true`.
+   */
+  inputSchema: z.ZodType<I, z.ZodTypeDef, unknown>;
   /** Anthropic-compatible JSON schema. Hand-written to avoid a deps bump. */
   jsonSchema: object;
   handler: (input: I) => Promise<O>;
@@ -50,4 +54,43 @@ export interface VaultStat {
   mtime: number;
   /** File size in bytes. */
   size: number;
+}
+
+/**
+ * One wikilink reference inside a note. `link` is the raw target text
+ * (may be unresolved); `line` is the 0-indexed line number where the
+ * link appears.
+ */
+export interface FileLinkRef {
+  link: string;
+  line: number;
+}
+
+/**
+ * Per-file metadata as exposed by Obsidian's MetadataCache. Subset
+ * of what `app.metadataCache.getFileCache(tfile)` returns; tests
+ * provide this directly without an Obsidian dependency.
+ */
+export interface FileMetadata {
+  links: FileLinkRef[];
+  frontmatter: Record<string, unknown> | null;
+}
+
+/**
+ * Minimal metadata-cache shim used by the v0.1 backlinks + graph tools.
+ * Production wires this to `app.metadataCache` at plugin onload; tests
+ * inject a plain object.
+ */
+export interface MetadataCache {
+  /**
+   * Outbound resolved wikilinks: resolvedLinks[sourcePath][targetPath]
+   * = link count. Mirrors Obsidian's `app.metadataCache.resolvedLinks`.
+   */
+  resolvedLinks: Record<string, Record<string, number>>;
+
+  /** Per-file metadata; null if the file isn't indexed. */
+  getFileMetadata(path: string): FileMetadata | null;
+
+  /** Resolve a wikilink target text to a vault-relative path. */
+  resolveLink(linkText: string, sourcePath: string): string | null;
 }
