@@ -27,9 +27,11 @@ const context = await esbuild.context({
     '@lezer/common',
     '@lezer/highlight',
     '@lezer/lr',
-    'better-sqlite3',
     ...builtins,
   ],
+  loader: {
+    '.wasm': 'binary',
+  },
   format: 'cjs',
   target: 'es2022',
   platform: 'node',
