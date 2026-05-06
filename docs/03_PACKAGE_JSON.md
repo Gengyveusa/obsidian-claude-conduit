@@ -63,13 +63,13 @@ last_reviewed: 2026-05-04
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.0",
     "@xenova/transformers": "^2.17.2",
-    "better-sqlite3": "^11.5.0",
+    "sql.js": "^1.14.0",
     "yaml": "^2.6.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^22.10.0",
+    "@types/sql.js": "^1.4.11",
     "@typescript-eslint/eslint-plugin": "^8.15.0",
     "@typescript-eslint/parser": "^8.15.0",
     "builtin-modules": "^4.0.0",
@@ -84,13 +84,15 @@ last_reviewed: 2026-05-04
 }
 ```
 
+> **Update 2026-05-06 (per [[2026-05-06-sqlite-shipping-strategy|ADR-011]]):** `better-sqlite3` was replaced with `sql.js`. The provisional Curator answer in [[02_SPEC|spec §10 Q2]] ("better-sqlite3 — speed wins") was made before measuring Obsidian's distribution cost; native `.node` bindings have no canonical install path through `main.js`-only releases, and three prior plugins document this as adoption-blocking. ADR-011 §"Decision" has the full reasoning.
+
 ## Dependency rationale (why each)
 
 | Dep | Why |
 |---|---|
 | `@anthropic-ai/sdk` | The canonical Claude SDK. Per [[20-Decisions/2026-05-04-sagittarius-q1-q3-signoff\|ADR-007 Q1]] = (a) Direct SDK primary. |
 | `@xenova/transformers` | Provides `all-MiniLM-L6-v2` via ONNX-WASM in the browser/Node. Required to honor the [[Assets/code/corpus-ingest/parsers/embed_interface\|embedding contract]]'s "same model as corpus-ingest." Bundle cost ~3MB; model file ~22MB downloaded on first index. |
-| `better-sqlite3` | Native SQLite for Node. Sagittarius is desktop-only (per ADR-007 bonus); `better-sqlite3` is faster than `sql.js` and avoids WASM overhead. Mobile would force sql.js — defer. |
+| `sql.js` | SQLite as WASM, pure-JS. Per [[2026-05-06-sqlite-shipping-strategy\|ADR-011]]: bundleable into a single `main.js` via esbuild's binary loader — no per-platform native bindings to ship. Slower than `better-sqlite3` (~5–10×) but adequate for v0.1 vault sizes; revisit in Phase 5 if perf bites. |
 | `yaml` | Frontmatter parsing. Standard. |
 | `zod` | Tool input/output schema validation at the agent's tool-call boundary. Each tool's input_schema gets a paired Zod schema for runtime validation. |
 
@@ -99,13 +101,14 @@ last_reviewed: 2026-05-04
 | Dep | Why |
 |---|---|
 | `obsidian` | Plugin API types. `peerDependency`-style; not bundled. |
-| `esbuild` | The canonical Obsidian plugin build tool. Single `main.js` bundle. |
+| `esbuild` | The canonical Obsidian plugin build tool. Single `main.js` bundle. WASM binary loader is enabled for sql.js's `sql-wasm.wasm` per ADR-011. |
 | `vitest` | Per killer prompt §4 — "vitest for units, playwright for the Obsidian test harness." Phase 1 focuses on vitest; playwright in Phase 2. |
 | `eslint` + `@typescript-eslint/*` | Strict TS lint (per killer prompt §9 — "no `any` except at FFI boundaries with a `// TODO: type` note"). |
 | `prettier` | Format consistency. Configure with single-quotes, trailing commas, 100 char line width to match contemporary TS style. |
 | `tslib` | Required for `importHelpers: true` in tsconfig (smaller bundle). |
 | `typescript` | Compiler. Strict mode required by killer prompt §4. |
 | `builtin-modules` | Esbuild needs to know which modules are Node builtins to externalize. |
+| `@types/sql.js` | TypeScript definitions for sql.js. Tracks the runtime version. |
 
 ## Versions to revisit at Phase 2 kickoff
 

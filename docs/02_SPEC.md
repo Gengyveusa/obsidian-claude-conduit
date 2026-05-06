@@ -536,6 +536,11 @@ Provisional Curator answers (low confidence):
 
 These get answered in the Phase 2 kickoff session, not now.
 
+### Resolutions (post-scaffold)
+
+- **Q2 → resolved 2026-05-06.** Per [[2026-05-06-sqlite-shipping-strategy|ADR-011]], the provisional answer was wrong — `better-sqlite3` forces a per-platform `.node`-binary download step that's documented as adoption-blocking in three prior Obsidian plugins (`windily-cloud/obsidian-sqlite3`, `WWF2022/obsidian-sqlite3-plugin`, ZotLit). **Adopted: `sql.js` with WASM base64-inlined into `main.js`.** Trade-off: ~5–10× slower than native, ~1.5 MB `main.js`, whole-DB-in-memory model that stresses ADR-010 §5 perf gate past ~5K notes. Revisit in Phase 5 if it bites.
+- Q1 / Q3 / Q4 still open as of 2026-05-06; will be resolved at the relevant Phase 3 sub-sessions.
+
 ---
 
 ## 11. Sign-off
