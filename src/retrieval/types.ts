@@ -26,18 +26,19 @@ export interface Note {
 }
 
 /**
- * The required `schema_meta` rows per the embedding contract §3. Both
- * `corpus-ingest` (Python) and Sagittarius write this table on every build.
- * Reading a DB without all of these rows is a contract violation.
+ * Schema_meta row contents per the embedding contract §3. Field types are
+ * intentionally widened (string/number) so callers can READ foreign DBs
+ * and detect contract drift at runtime — narrow literals would make the
+ * mismatch checks tautological at the type level.
  */
 export interface SchemaMeta {
-  schemaVersion: '1';
-  model: 'sentence-transformers/all-MiniLM-L6-v2';
-  vectorDim: 384;
-  vectorDtype: 'float32';
-  chunkerMaxChars: 1500;
-  chunkerOverlap: 200;
-  writer: 'corpus-ingest' | 'sagittarius';
+  schemaVersion: string;
+  model: string;
+  vectorDim: number;
+  vectorDtype: string;
+  chunkerMaxChars: number;
+  chunkerOverlap: number;
+  writer: string;
   writerVersion: string;
 }
 

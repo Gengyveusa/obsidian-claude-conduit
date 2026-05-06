@@ -135,14 +135,14 @@ export class SqliteEngine {
       }
     }
     return {
-      schemaVersion: map.get('schema_version') as '1',
-      model: map.get('model') as typeof MODEL,
-      vectorDim: Number(map.get('vector_dim')) as 384,
-      vectorDtype: map.get('vector_dtype') as 'float32',
-      chunkerMaxChars: Number(map.get('chunker_max_chars')) as 1500,
-      chunkerOverlap: Number(map.get('chunker_overlap')) as 200,
-      writer: map.get('writer') as 'corpus-ingest' | 'sagittarius',
-      writerVersion: map.get('writer_version') as string,
+      schemaVersion: map.get('schema_version') ?? '',
+      model: map.get('model') ?? '',
+      vectorDim: Number(map.get('vector_dim')),
+      vectorDtype: map.get('vector_dtype') ?? '',
+      chunkerMaxChars: Number(map.get('chunker_max_chars')),
+      chunkerOverlap: Number(map.get('chunker_overlap')),
+      writer: map.get('writer') ?? '',
+      writerVersion: map.get('writer_version') ?? '',
     };
   }
 
@@ -186,6 +186,34 @@ export class SqliteEngine {
       text: row[2] as string,
       embedding: leBytesToFloat32(row[3] as Uint8Array),
     };
+  }
+
+  /**
+   * Iterate all chunks, optionally filtered by a path prefix. Materializes
+   * Chunk[] for v0.1 scale (target 30–40 K rows); streaming optimization is
+   * a Phase 5 follow-up if vault sizes grow past the ADR-010 §5 perf gate.
+   * @example const all = engine.allChunks(); const fortressFlow = engine.allChunks({ pathPrefix: '50-FortressFlow/' });
+   */
+  allChunks(filter?: { pathPrefix?: string }): Chunk[] {
+    const sql = filter?.pathPrefix
+      ? 'SELECT note_path, chunk_index, text, embedding FROM chunks WHERE note_path LIKE ? || "%" ORDER BY note_path, chunk_index'
+      : 'SELECT note_path, chunk_index, text, embedding FROM chunks ORDER BY note_path, chunk_index';
+    const stmt = this.db.prepare(sql);
+    if (filter?.pathPrefix) {
+      stmt.bind([filter.pathPrefix]);
+    }
+    const out: Chunk[] = [];
+    while (stmt.step()) {
+      const row = stmt.get();
+      out.push({
+        notePath: row[0] as string,
+        chunkIndex: row[1] as number,
+        text: row[2] as string,
+        embedding: leBytesToFloat32(row[3] as Uint8Array),
+      });
+    }
+    stmt.free();
+    return out;
   }
 
   /**
