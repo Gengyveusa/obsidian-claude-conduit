@@ -1,0 +1,34 @@
+# Editor
+.vscode/
+.idea/
+*.iml
+*.swp
+.DS_Store
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+
+# Build output (released to GitHub Releases, not tracked in repo)
+main.js
+main.js.map
+*.map
+dist/
+coverage/
+
+# Plugin runtime data — must never be committed (per spec §7 threat model)
+data.json
+.obsidian/plugins/obsidian-claude-conduit/
+
+# Secrets
+*.env
+.env
+.env.*
+
+# Test fixtures' generated artifacts
+test/fixtures/**/.obsidian/
+test/fixtures/**/index.sqlite
+test/fixtures/**/.embeddings.db
