@@ -33,9 +33,9 @@ export interface AnthropicToolSchema {
 }
 
 /**
- * Minimal vault adapter used by the v0.1 read tools. Intentionally a
- * subset of Obsidian's `DataAdapter` so tests can fake it without
- * importing the real Obsidian module. Production wires this to
+ * Minimal vault adapter used by the v0.1 read tools + ConversationLogger.
+ * Intentionally a subset of Obsidian's `DataAdapter` so tests can fake it
+ * without importing the real Obsidian module. Production wires this to
  * `app.vault.adapter` at plugin onload.
  *
  * @example
@@ -45,6 +45,10 @@ export interface AnthropicToolSchema {
 export interface VaultAdapter {
   exists(path: string): Promise<boolean>;
   read(path: string): Promise<string>;
+  /** Write (or overwrite) a UTF-8 text file at the given vault-relative path. */
+  write(path: string, content: string): Promise<void>;
+  /** Create the folder if it doesn't exist. No-op if it does. */
+  mkdir(path: string): Promise<void>;
   stat(path: string): Promise<VaultStat | null>;
   list(folderPath: string): Promise<{ files: string[]; folders: string[] }>;
 }

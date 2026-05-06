@@ -23,6 +23,14 @@ class FakeVaultAdapter implements VaultAdapter {
     return Promise.resolve('');
   }
 
+  write(_path: string, _content: string): Promise<void> {
+    return Promise.resolve();
+  }
+
+  mkdir(_path: string): Promise<void> {
+    return Promise.resolve();
+  }
+
   stat(path: string): Promise<VaultStat | null> {
     return Promise.resolve(this.tree.files.get(path)?.stat ?? null);
   }
