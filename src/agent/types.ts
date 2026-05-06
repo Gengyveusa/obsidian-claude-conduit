@@ -25,11 +25,17 @@ export interface ToolDefinition<I = unknown, O = unknown> {
 
 /**
  * Anthropic SDK's `tools` field shape. ToolRegistry.schemas() emits this.
+ * `input_schema` is narrowed to the `{ type: 'object', ... }` form that
+ * the SDK's Tool type wants.
  */
 export interface AnthropicToolSchema {
   name: string;
   description: string;
-  input_schema: object;
+  input_schema: {
+    type: 'object';
+    properties?: Record<string, unknown>;
+    required?: string[];
+  };
 }
 
 /**
