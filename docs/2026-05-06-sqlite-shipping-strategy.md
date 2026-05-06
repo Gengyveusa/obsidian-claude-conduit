@@ -1,14 +1,14 @@
 ---
-title: "ADR-011 (DRAFT): SQLite shipping strategy — sql.js over better-sqlite3"
+title: "ADR-011: SQLite shipping strategy — sql.js over better-sqlite3"
 type: decision
-status: "Proposed"
+status: "Accepted"
 date: 2026-05-06
 created: 2026-05-06
 updated: 2026-05-06
 deciders: [Thad]
 supersedes:
 superseded-by:
-tags: [decision, ADR, sagittarius, sqlite, distribution, draft]
+tags: [decision, ADR, sagittarius, sqlite, distribution]
 related:
   - "[[2026-05-04-sagittarius-q1-q3-signoff]]"
   - "[[2026-05-04-sagittarius-build-process]]"
@@ -17,10 +17,9 @@ related:
   - "[[embed_interface]]"
 ---
 
-# ADR-011 (DRAFT): SQLite shipping strategy — sql.js over better-sqlite3
+# ADR-011: SQLite shipping strategy — sql.js over better-sqlite3
 
-> **Status:** Proposed by Claude (Phase 3a kickoff). Awaiting Thad's accept/reject.
-> **Decision urgency:** blocks Phase 3 retrieval-layer implementation. Cannot start `RetrievalLayer.ts` without choosing the engine.
+> **Status:** Accepted by Thad on 2026-05-06.
 > **Supersedes:** the provisional answer in [`02_SPEC.md` §10 Q2](02_SPEC.md) ("`better-sqlite3` — speed wins") and the dependency choice in [`03_PACKAGE_JSON.md`](03_PACKAGE_JSON.md).
 
 ## Context
@@ -120,6 +119,6 @@ If accepted:
 
 ## Decision
 
-- [ ] **Accept** — adopt sql.js per this ADR. Status flips to `Accepted`, follow-ups become PR work.
+- [x] **Accept** — adopted sql.js per this ADR on 2026-05-06. Follow-ups become PR work (see "Follow-up" section above).
 - [ ] **Reject** — keep `better-sqlite3`. Document the user-download UX in README and design Phase 3 install flow accordingly.
 - [ ] **Modify** — request changes (e.g., go with `@sqlite.org/sqlite-wasm` instead, or defer until vault sizes are measured).
