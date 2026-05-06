@@ -52,7 +52,7 @@ export class ToolRegistry {
     return [...this.tools.values()].map((t) => ({
       name: t.name,
       description: t.description,
-      input_schema: t.jsonSchema,
+      input_schema: t.jsonSchema as AnthropicToolSchema['input_schema'],
     }));
   }
 
