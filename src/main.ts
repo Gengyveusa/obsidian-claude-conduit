@@ -1,35 +1,67 @@
+import Anthropic from '@anthropic-ai/sdk';
 import { Notice, Plugin } from 'obsidian';
 
+import { ConduitAgent } from './agent/ConduitAgent';
+import { ToolRegistry } from './agent/ToolRegistry';
+import { makeGetBacklinksTool } from './agent/tools/get_backlinks';
+import { makeGetGraphNeighborhoodTool } from './agent/tools/get_graph_neighborhood';
+import { makeListFolderTool } from './agent/tools/list_folder';
+import { makeReadNoteTool } from './agent/tools/read_note';
+import { BudgetTracker } from './budget/BudgetTracker';
+import { PluginDataBudgetPersistence } from './budget/PluginDataBudgetPersistence';
+import { ConversationLogger } from './log/ConversationLogger';
+import { MetadataCacheImpl } from './obsidian/MetadataCacheImpl';
+import { loadSystemPromptParts } from './obsidian/SystemPromptLoader';
+import { VaultAdapterImpl } from './obsidian/VaultAdapterImpl';
 import { openSqliteEngine } from './retrieval/openEngine';
 import { SagittariusSettingTab } from './settings/SagittariusSettingTab';
 import { DEFAULT_SETTINGS, type SagittariusSettings } from './settings/types';
+import { ChatView, CHAT_VIEW_TYPE } from './views/ChatView';
+import { QuickQuestionModal } from './views/QuickQuestionModal';
 
 const PLUGIN_NAME = 'Sagittarius — Claude Conduit';
 const RIBBON_ICON = 'message-square';
+const CONSTITUTION_PATH = 'THAD_MAN.md';
+const HANGAR_VOICE_PATH = '21-Agents/concierge.md';
+
+interface AgentBundle {
+  agent: ConduitAgent;
+}
 
 /**
- * Sagittarius plugin entry point.
- *
- * v0.1 / Phase 3e-3a: settings tab + persistence are wired. ChatView,
- * QuickQuestionModal, and the ConduitAgent integration land in 3e-3b
- * per docs/02_SPEC.md and docs/2026-05-04-sagittarius-build-process.md.
- *
- * @example
- *   // Loaded automatically by Obsidian when the plugin is enabled.
+ * Sagittarius plugin entry point. Phase 3e-3b wires the side panel,
+ * quick-question modal, and ConduitAgent end-to-end. Indexing +
+ * search_vault tool come in 3e-3c.
  */
 export default class SagittariusPlugin extends Plugin {
   settings: SagittariusSettings = DEFAULT_SETTINGS;
+  private agentBundle: AgentBundle | null = null;
 
   override async onload(): Promise<void> {
     await this.loadSettings();
     this.addSettingTab(new SagittariusSettingTab(this.app, this));
 
+    this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
+
     this.addRibbonIcon(RIBBON_ICON, PLUGIN_NAME, () => {
-      new Notice('Sagittarius online. Side panel coming in Phase 3e-3b.');
+      void this.activateChatView();
     });
 
-    // Smoke-check: open an in-memory SQLite engine on plugin load. Catches
-    // wasm-load + schema-migration breakage early; cheap (<50ms).
+    this.addCommand({
+      id: 'open-chat-panel',
+      name: 'Open chat panel',
+      callback: () => {
+        void this.activateChatView();
+      },
+    });
+
+    this.addCommand({
+      id: 'quick-question',
+      name: 'Quick question',
+      callback: () => new QuickQuestionModal(this.app, this).open(),
+    });
+
+    // Smoke-check: open an in-memory SQLite engine on plugin load.
     try {
       const engine = await openSqliteEngine({ writerVersion: this.manifest.version });
       const meta = engine.getSchemaMeta();
@@ -41,33 +73,121 @@ export default class SagittariusPlugin extends Plugin {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[sagittarius] SQLite engine smoke check FAILED: ${msg}`);
-      new Notice(
-        `Sagittarius: SQLite engine failed to initialize. Check the developer console.`,
-      );
+      new Notice(`Sagittarius: SQLite engine failed to initialize. Check the developer console.`);
     }
   }
 
   override onunload(): void {
+    this.agentBundle = null;
     console.warn(`[sagittarius] ${PLUGIN_NAME} unloaded.`);
   }
 
   /**
-   * Load persisted settings from <plugin-dir>/data.json, falling back to
-   * DEFAULT_SETTINGS for any missing fields. Forward-compatible: a future
-   * plugin that adds a new field reads safely from older data.json files.
-   * @example await this.loadSettings();
+   * Get (or build) the agent bundle. Returns null if no API key is set —
+   * callers should prompt the user to fill it in via the settings tab.
+   * @example const bundle = await this.plugin.getAgentBundle();
    */
-  async loadSettings(): Promise<void> {
-    const persisted = (await this.loadData()) as Partial<SagittariusSettings> | null;
-    this.settings = { ...DEFAULT_SETTINGS, ...(persisted ?? {}) };
+  async getAgentBundle(): Promise<AgentBundle | null> {
+    if (this.settings.apiKey.length === 0) {
+      return null;
+    }
+    if (!this.agentBundle) {
+      this.agentBundle = await this.buildAgent();
+    }
+    return this.agentBundle;
+  }
+
+  /** Reset the cached agent so the next chat picks up changed settings. */
+  invalidateAgent(): void {
+    this.agentBundle = null;
   }
 
   /**
-   * Persist the current settings object. Called by SagittariusSettingTab
-   * after every onChange.
-   * @example await this.saveSettings();
+   * Reveal the chat panel in the right sidebar (creating it if needed).
+   * @example this.activateChatView();
    */
+  async activateChatView(): Promise<void> {
+    const { workspace } = this.app;
+    let leaf = workspace.getLeavesOfType(CHAT_VIEW_TYPE)[0];
+    if (!leaf) {
+      const rightLeaf = workspace.getRightLeaf(false);
+      if (!rightLeaf) {
+        new Notice('Sagittarius: no workspace leaf available to open the chat panel.');
+        return;
+      }
+      leaf = rightLeaf;
+      await leaf.setViewState({ type: CHAT_VIEW_TYPE, active: true });
+    }
+    await workspace.revealLeaf(leaf);
+  }
+
+  async loadSettings(): Promise<void> {
+    const persisted = (await this.loadData()) as Record<string, unknown> | null;
+    if (!persisted) {
+      this.settings = { ...DEFAULT_SETTINGS };
+      return;
+    }
+    // Strip out the __budget key so it doesn't shadow a settings field.
+    const rest: Record<string, unknown> = { ...persisted };
+    delete rest['__budget'];
+    this.settings = {
+      ...DEFAULT_SETTINGS,
+      ...(rest as Partial<SagittariusSettings>),
+    };
+  }
+
   async saveSettings(): Promise<void> {
-    await this.saveData(this.settings);
+    const existing = ((await this.loadData()) as Record<string, unknown> | null) ?? {};
+    await this.saveData({ ...existing, ...this.settings });
+    this.invalidateAgent();
+  }
+
+  /** Build the agent + all its deps. Called lazily when chat is first invoked. */
+  private async buildAgent(): Promise<AgentBundle> {
+    const adapter = new VaultAdapterImpl(this.app);
+    const cache = new MetadataCacheImpl(this.app);
+
+    const tools = new ToolRegistry();
+    tools.register(makeReadNoteTool(adapter));
+    tools.register(makeListFolderTool(adapter));
+    tools.register(makeGetBacklinksTool(cache));
+    tools.register(makeGetGraphNeighborhoodTool(cache));
+    // search_vault gets registered in 3e-3c once the index is built.
+
+    const persistence = new PluginDataBudgetPersistence(this);
+    const budget = await BudgetTracker.load(persistence, {
+      maxTokensPerDay: this.settings.maxTokensPerDay,
+      maxDollarsPerDay: this.settings.maxDollarsPerDay,
+      tz: this.settings.budgetResetTimezone,
+    });
+
+    const logger = new ConversationLogger(adapter, this.settings.conversationLogPath);
+
+    const systemPromptParts = await loadSystemPromptParts(adapter, {
+      constitutionPath: CONSTITUTION_PATH,
+      hangarVoicePath: HANGAR_VOICE_PATH,
+    });
+
+    const client = new Anthropic({
+      apiKey: this.settings.apiKey,
+      dangerouslyAllowBrowser: true,
+    });
+
+    const agent = new ConduitAgent(
+      {
+        messages: client.messages,
+        tools,
+        budget,
+        logger,
+        systemPromptParts,
+      },
+      {
+        defaultModel: this.settings.defaultModel,
+        fallbackModel: this.settings.fallbackModel,
+        retrievalK: this.settings.retrievalK,
+      },
+    );
+
+    return { agent };
   }
 }
