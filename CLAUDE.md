@@ -94,7 +94,12 @@ When unsure (per ADR-010 §4):
 
 **Bundle warning:** Phase 3e-3c is when `@xenova/transformers` first lands on the entry-point chain (via `EmbedClient`). `main.js` will jump from 1.25 MB to roughly 4 MB. ADR-011 anticipated this.
 
-**Open question for kickoff:** background-index on plugin load (auto mode per spec §3.1), or explicit user-triggered build only? Spec §3.1 says default `indexingMode: 'auto'` — auto means "on startup + on edit." Empirically this could be slow first-run. Probably ship "manual only" for v0.1 with auto deferred to v0.5; flag in 3e-3c PR description.
+**Open question for kickoff:** ~~background-index on plugin load (auto mode per spec §3.1), or explicit user-triggered build only?~~ **Resolved 2026-05-07 by Thad: auto-index on load** — matches spec §3.1 default `indexingMode: 'auto'` ("on-startup + on-edit"). Implementation note: first-run cold index of a sizeable vault (~30K chunks × the all-MiniLM-L6-v2 inference cost) will take a meaningful chunk of seconds-to-minutes. Phase 3e-3c should:
+
+  - Run the indexer in the background after plugin onload (don't block the load) — `setTimeout(() => void this.runIndexBuild(), 0)` or similar, with a status indicator in the chat panel.
+  - Make the indexer idempotent on mtime so repeat runs are fast (skip unchanged files; bump on edit).
+  - Surface a "indexing… N/M" status in the ChatView header or a Notice on completion.
+  - Keep manual `Build Index` command available too for "rebuild from scratch."
 
 **Testability:** `Chunker` is pure function — easy. `Indexer` needs `VaultAdapter` + `EmbedClient` mocks (both already established patterns). `IndexPersistence` round-trips a buffer.
 
