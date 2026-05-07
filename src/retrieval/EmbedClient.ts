@@ -30,7 +30,29 @@ const defaultFactory: EmbedPipelineFactory = async () => {
   // TODO: type — narrow once @xenova/transformers ships stable .d.ts.
   const transformers = (await import('@xenova/transformers')) as unknown as {
     pipeline: (task: string, model: string) => Promise<EmbedPipeline>;
+    env: {
+      allowLocalModels: boolean;
+      allowRemoteModels: boolean;
+      useBrowserCache: boolean;
+      useFSCache: boolean;
+      cacheDir?: string;
+      localModelPath?: string;
+    };
   };
+
+  // Force the browser/web path. In Obsidian's Electron renderer, Node's
+  // `fs` and `path` modules ARE available, so transformers.js's env
+  // detection thinks we're "running locally" and tries to construct a
+  // local cache directory via path.join(env.cacheDir, ...) — but
+  // cacheDir ends up undefined in this environment, throwing
+  // "The 'path' argument must be of type string... Received undefined"
+  // on every encode call. Forcing browser cache + remote-only models
+  // routes through fetch() instead, sidestepping the path issue.
+  transformers.env.allowLocalModels = false;
+  transformers.env.allowRemoteModels = true;
+  transformers.env.useBrowserCache = true;
+  transformers.env.useFSCache = false;
+
   return transformers.pipeline('feature-extraction', MODEL_NAME);
 };
 
