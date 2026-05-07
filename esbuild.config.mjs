@@ -9,6 +9,33 @@ const banner = `/*
 
 const prod = process.argv[2] === 'production';
 
+/**
+ * Replace `onnxruntime-node` and `sharp` with empty-module stubs at bundle
+ * time. Both are Node-only deps that @xenova/transformers tries to load
+ * via require(). In Obsidian's Electron renderer the require throws
+ * (modules not present in our distribution), and transformers.js's
+ * environment detection misinterprets the throw as a hard error rather
+ * than the absence-of-Node-runtime signal it's supposed to be.
+ *
+ * Returning an empty module makes those requires succeed with a no-op
+ * object; transformers.js's feature detection then fails cleanly and
+ * falls back to onnxruntime-web (which IS bundled per the .wasm loader
+ * + sql.js precedent).
+ */
+const stubNodeOnlyDeps = {
+  name: 'stub-node-only-deps',
+  setup(build) {
+    build.onResolve({ filter: /^(onnxruntime-node|sharp)$/ }, (args) => ({
+      path: args.path,
+      namespace: 'stubbed',
+    }));
+    build.onLoad({ filter: /.*/, namespace: 'stubbed' }, () => ({
+      contents: 'module.exports = {};',
+      loader: 'js',
+    }));
+  },
+};
+
 const context = await esbuild.context({
   banner: { js: banner },
   entryPoints: ['src/main.ts'],
@@ -27,17 +54,12 @@ const context = await esbuild.context({
     '@lezer/common',
     '@lezer/highlight',
     '@lezer/lr',
-    // transformers.js dynamically picks an ONNX runtime by environment.
-    // In Obsidian's renderer it uses onnxruntime-web (bundled WASM); the
-    // Node-side onnxruntime-node has .node native bindings esbuild can't
-    // touch, and `sharp` brings its own native binaries.
-    'onnxruntime-node',
-    'sharp',
     ...builtins,
   ],
   loader: {
     '.wasm': 'binary',
   },
+  plugins: [stubNodeOnlyDeps],
   format: 'cjs',
   target: 'es2022',
   platform: 'node',
