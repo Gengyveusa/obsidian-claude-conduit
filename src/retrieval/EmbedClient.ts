@@ -30,28 +30,37 @@ const defaultFactory: EmbedPipelineFactory = async () => {
   // TODO: type — narrow once @xenova/transformers ships stable .d.ts.
   const transformers = (await import('@xenova/transformers')) as unknown as {
     pipeline: (task: string, model: string) => Promise<EmbedPipeline>;
-    env: {
-      allowLocalModels: boolean;
-      allowRemoteModels: boolean;
-      useBrowserCache: boolean;
-      useFSCache: boolean;
-      cacheDir?: string;
-      localModelPath?: string;
-    };
+    env: Record<string, unknown>;
   };
 
-  // Force the browser/web path. In Obsidian's Electron renderer, Node's
-  // `fs` and `path` modules ARE available, so transformers.js's env
-  // detection thinks we're "running locally" and tries to construct a
-  // local cache directory via path.join(env.cacheDir, ...) — but
-  // cacheDir ends up undefined in this environment, throwing
-  // "The 'path' argument must be of type string... Received undefined"
-  // on every encode call. Forcing browser cache + remote-only models
-  // routes through fetch() instead, sidestepping the path issue.
-  transformers.env.allowLocalModels = false;
-  transformers.env.allowRemoteModels = true;
-  transformers.env.useBrowserCache = true;
-  transformers.env.useFSCache = false;
+  // In Obsidian's Electron renderer, Node's `fs` and `path` ARE available,
+  // so transformers.js's env detection sets RUNNING_LOCALLY = true and
+  // tries to fs-cache models at env.cacheDir. cacheDir ends up undefined
+  // (env-paths fails or process.env isn't shaped as expected) → fs.* gets
+  // called with `undefined` → "The 'path' argument must be of type string"
+  // thrown 354 times.
+  //
+  // Force the browser-cache code path:
+  //   - useFS / useFSCache: false (don't try local cache writes)
+  //   - useBrowserCache: true (use renderer's Cache Storage instead)
+  //   - allowLocalModels: false (skip the local-model lookup that also
+  //     hits the bad cacheDir)
+  //   - allowRemoteModels: true (download from HF CDN as needed)
+  //   - cacheDir: '' (defensive: if any code path still uses cacheDir
+  //     after the flag checks, hand it a string instead of undefined)
+  //
+  // The shotgun approach is intentional — different transformers.js code
+  // paths read different flags, and getting the model to load matters
+  // more than minimal config.
+  const env = transformers.env;
+  env['useFS'] = false;
+  env['useFSCache'] = false;
+  env['useBrowserCache'] = true;
+  env['useCustomCache'] = false;
+  env['allowLocalModels'] = false;
+  env['allowRemoteModels'] = true;
+  env['cacheDir'] = '';
+  env['localModelPath'] = '';
 
   return transformers.pipeline('feature-extraction', MODEL_NAME);
 };
