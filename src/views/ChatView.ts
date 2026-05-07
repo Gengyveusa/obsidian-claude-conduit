@@ -70,11 +70,7 @@ export class ChatView extends ItemView {
     modeRow.createEl('label', { text: 'Mode: ' });
     const select = modeRow.createEl('select');
     select.createEl('option', { value: 'chat', text: 'Chat' });
-    const vaultQaOption = select.createEl('option', {
-      value: 'vault-qa',
-      text: 'Vault QA (3e-3c)',
-    });
-    vaultQaOption.disabled = true;
+    select.createEl('option', { value: 'vault-qa', text: 'Vault QA' });
     select.value = this.mode;
     select.addEventListener('change', () => {
       if (select.value === 'chat' || select.value === 'vault-qa') {
@@ -223,9 +219,10 @@ export class ChatView extends ItemView {
     this.statusEl.empty();
     const apiKeyOk = this.plugin.settings.apiKey.length > 0;
     const turn = this.history.length / 2;
+    const indexing = this.plugin.isIndexing() ? ' · indexing…' : '';
     this.statusEl.setText(
       apiKeyOk
-        ? `Model: ${this.plugin.settings.defaultModel} · Turn ${Math.floor(turn)}`
+        ? `Model: ${this.plugin.settings.defaultModel} · Turn ${Math.floor(turn)}${indexing}`
         : 'API key not set — open Settings → Sagittarius.',
     );
   }
