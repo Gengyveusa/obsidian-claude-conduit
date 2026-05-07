@@ -25,8 +25,16 @@ export class VaultAdapterImpl implements VaultAdapter {
     return this.inner.read(path);
   }
 
+  readBinary(path: string): Promise<ArrayBuffer> {
+    return this.inner.readBinary(path);
+  }
+
   write(path: string, content: string): Promise<void> {
     return this.inner.write(path, content);
+  }
+
+  writeBinary(path: string, content: ArrayBuffer): Promise<void> {
+    return this.inner.writeBinary(path, content);
   }
 
   async mkdir(path: string): Promise<void> {

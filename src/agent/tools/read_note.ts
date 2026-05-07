@@ -1,9 +1,7 @@
-import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 
+import { splitFrontmatter } from '../../util/frontmatter';
 import type { ToolDefinition, VaultAdapter } from '../types';
-
-const FRONTMATTER_REGEX = /^---\n([\s\S]*?)\n---\n?/;
 
 const inputSchema = z.object({
   path: z
@@ -80,27 +78,3 @@ export function makeReadNoteTool(
   };
 }
 
-/** Split `--- yaml ---\nbody` into parsed frontmatter + body. */
-function splitFrontmatter(raw: string): {
-  frontmatter: Record<string, unknown> | null;
-  body: string;
-} {
-  const match = FRONTMATTER_REGEX.exec(raw);
-  if (!match) {
-    return { frontmatter: null, body: raw };
-  }
-  const yamlText = match[1];
-  const body = raw.slice(match[0].length);
-  let parsed: unknown;
-  try {
-    parsed = parseYaml(yamlText);
-  } catch {
-    // Malformed YAML → return null frontmatter, keep raw body. Don't throw;
-    // the agent should still get the body even if frontmatter is unparseable.
-    return { frontmatter: null, body: raw };
-  }
-  if (parsed === null || parsed === undefined || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { frontmatter: null, body };
-  }
-  return { frontmatter: parsed as Record<string, unknown>, body };
-}

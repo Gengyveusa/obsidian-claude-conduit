@@ -1,5 +1,5 @@
 import initSqlJs, { type Database } from 'sql.js';
-import type { Chunk, SchemaMeta } from './types';
+import type { Chunk, Note, SchemaMeta } from './types';
 
 /**
  * Embedding-contract constants. Pinned to schema v1 per
@@ -227,6 +227,92 @@ export class SqliteEngine {
       throw new Error(`SqliteEngine.count: COUNT(*) returned a non-number for table '${table}'.`);
     }
     return value;
+  }
+
+  /**
+   * Count chunks belonging to a single note path.
+   * @example const n = engine.countChunksForPath('a.md');
+   */
+  countChunksForPath(notePath: string): number {
+    const stmt = this.db.prepare('SELECT COUNT(*) FROM chunks WHERE note_path = ?');
+    stmt.bind([notePath]);
+    stmt.step();
+    const row = stmt.get();
+    stmt.free();
+    return row[0] as number;
+  }
+
+  /**
+   * Delete all chunks for a single note path. Used by the indexer to
+   * uphold the contract §4 invariant: a failed file ingest must not
+   * leave partial chunks.
+   * @example engine.deleteChunksForPath('a.md');
+   */
+  deleteChunksForPath(notePath: string): void {
+    const stmt = this.db.prepare('DELETE FROM chunks WHERE note_path = ?');
+    stmt.run([notePath]);
+    stmt.free();
+  }
+
+  /**
+   * Insert or replace a row in the `notes` table.
+   * @example engine.upsertNote({ path: 'a.md', title: null, source: null, doctrineAlignment: null, lastModified: 1.5e9, chunkCount: 3 });
+   */
+  upsertNote(note: Note): void {
+    const stmt = this.db.prepare(
+      'INSERT OR REPLACE INTO notes (path, title, source, doctrine_alignment, last_modified, chunk_count) VALUES (?, ?, ?, ?, ?, ?)',
+    );
+    stmt.run([
+      note.path,
+      note.title,
+      note.source,
+      note.doctrineAlignment,
+      note.lastModified,
+      note.chunkCount,
+    ]);
+    stmt.free();
+  }
+
+  /**
+   * Read a note's row, or null if absent.
+   * @example const n = engine.getNote('a.md');
+   */
+  getNote(notePath: string): Note | null {
+    const stmt = this.db.prepare(
+      'SELECT path, title, source, doctrine_alignment, last_modified, chunk_count FROM notes WHERE path = ?',
+    );
+    stmt.bind([notePath]);
+    if (!stmt.step()) {
+      stmt.free();
+      return null;
+    }
+    const row = stmt.get();
+    stmt.free();
+    return {
+      path: row[0] as string,
+      title: row[1] as string | null,
+      source: row[2] as string | null,
+      doctrineAlignment: row[3] as string | null,
+      lastModified: row[4] as number,
+      chunkCount: row[5] as number,
+    };
+  }
+
+  /**
+   * Get the recorded last_modified time for a note, or null if absent.
+   * Used by the Indexer to skip unchanged files.
+   * @example const m = engine.getNoteMtime('a.md');
+   */
+  getNoteMtime(notePath: string): number | null {
+    const stmt = this.db.prepare('SELECT last_modified FROM notes WHERE path = ?');
+    stmt.bind([notePath]);
+    if (!stmt.step()) {
+      stmt.free();
+      return null;
+    }
+    const row = stmt.get();
+    stmt.free();
+    return row[0] as number;
   }
 
   /**
