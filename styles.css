@@ -1,3 +1,157 @@
 /* Sagittarius — Claude Conduit
- * Plugin styles. Empty in v0.1; populated when the side panel lands in Phase 3.
+ * Plugin styles. v0.1 — minimal chat surface + modal.
  */
+
+/* ── Side panel (ChatView) ─────────────────────────────────────────────── */
+
+.sagittarius-chat {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0.5em 0.75em;
+  gap: 0.5em;
+}
+
+.sagittarius-header h3 {
+  margin: 0 0 0.25em 0;
+}
+
+.sagittarius-mode-row {
+  display: flex;
+  gap: 0.4em;
+  align-items: center;
+  font-size: 0.9em;
+  color: var(--text-muted);
+}
+
+.sagittarius-messages {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6em;
+  padding: 0.4em 0;
+}
+
+.sagittarius-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 1em;
+  text-align: center;
+}
+
+.sagittarius-message {
+  padding: 0.55em 0.75em;
+  border-radius: 0.55em;
+  max-width: 100%;
+  word-wrap: break-word;
+}
+
+.sagittarius-message-user {
+  background-color: var(--background-modifier-border);
+  align-self: flex-end;
+  max-width: 90%;
+}
+
+.sagittarius-message-assistant {
+  background-color: var(--background-secondary);
+}
+
+.sagittarius-role {
+  font-size: 0.78em;
+  color: var(--text-muted);
+  margin-bottom: 0.25em;
+  font-weight: 600;
+}
+
+.sagittarius-body {
+  font-size: 0.95em;
+  line-height: 1.45;
+}
+
+.sagittarius-citations {
+  margin-top: 0.6em;
+  font-size: 0.85em;
+}
+
+.sagittarius-citations summary {
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.sagittarius-citations ul {
+  margin: 0.4em 0 0 0;
+  padding-left: 1.2em;
+}
+
+.sagittarius-meta {
+  margin-top: 0.4em;
+  font-size: 0.75em;
+  color: var(--text-muted);
+}
+
+.sagittarius-error {
+  color: var(--text-error);
+  font-weight: 500;
+}
+
+.sagittarius-input-row {
+  display: flex;
+  gap: 0.5em;
+  align-items: stretch;
+}
+
+.sagittarius-input {
+  flex: 1 1 auto;
+  min-height: 3em;
+  resize: vertical;
+  font-family: var(--font-text);
+}
+
+.sagittarius-send {
+  align-self: flex-end;
+  min-width: 4em;
+}
+
+.sagittarius-status {
+  font-size: 0.78em;
+  color: var(--text-muted);
+}
+
+/* ── Quick-question modal ─────────────────────────────────────────────── */
+
+.sagittarius-quick-modal {
+  min-width: 32em;
+}
+
+.sagittarius-quick-input {
+  width: 100%;
+  resize: vertical;
+  font-family: var(--font-text);
+  margin-bottom: 0.5em;
+}
+
+.sagittarius-quick-buttons {
+  display: flex;
+  gap: 0.5em;
+  justify-content: flex-end;
+}
+
+.sagittarius-quick-prompt {
+  color: var(--text-muted);
+  border-left: 3px solid var(--background-modifier-border);
+  padding-left: 0.6em;
+  margin-bottom: 0.6em;
+  white-space: pre-wrap;
+}
+
+.sagittarius-quick-response {
+  margin: 0.6em 0;
+  font-size: 0.95em;
+}
+
+.sagittarius-quick-meta {
+  font-size: 0.75em;
+  color: var(--text-muted);
+  margin-bottom: 0.6em;
+}
