@@ -51,8 +51,12 @@ export interface AnthropicToolSchema {
 export interface VaultAdapter {
   exists(path: string): Promise<boolean>;
   read(path: string): Promise<string>;
+  /** Read a file as raw bytes — used for sqlite index persistence. */
+  readBinary(path: string): Promise<ArrayBuffer>;
   /** Write (or overwrite) a UTF-8 text file at the given vault-relative path. */
   write(path: string, content: string): Promise<void>;
+  /** Write (or overwrite) raw bytes — used for sqlite index persistence. */
+  writeBinary(path: string, content: ArrayBuffer): Promise<void>;
   /** Create the folder if it doesn't exist. No-op if it does. */
   mkdir(path: string): Promise<void>;
   stat(path: string): Promise<VaultStat | null>;

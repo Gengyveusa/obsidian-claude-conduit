@@ -21,9 +21,17 @@ class FakeVaultAdapter implements VaultAdapter {
     return Promise.resolve(content);
   }
 
+  readBinary(_path: string): Promise<ArrayBuffer> {
+    return Promise.resolve(new ArrayBuffer(0));
+  }
+
   write(path: string, content: string): Promise<void> {
     this.files.set(path, content);
     this.writes.push({ path, content });
+    return Promise.resolve();
+  }
+
+  writeBinary(_path: string, _content: ArrayBuffer): Promise<void> {
     return Promise.resolve();
   }
 

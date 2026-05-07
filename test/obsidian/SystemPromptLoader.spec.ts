@@ -28,7 +28,15 @@ class FakeVaultAdapter implements VaultAdapter {
     return Promise.resolve(content);
   }
 
+  readBinary(): Promise<ArrayBuffer> {
+    return Promise.resolve(new ArrayBuffer(0));
+  }
+
   write(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  writeBinary(): Promise<void> {
     return Promise.resolve();
   }
 
