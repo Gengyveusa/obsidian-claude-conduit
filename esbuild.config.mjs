@@ -27,6 +27,12 @@ const context = await esbuild.context({
     '@lezer/common',
     '@lezer/highlight',
     '@lezer/lr',
+    // transformers.js dynamically picks an ONNX runtime by environment.
+    // In Obsidian's renderer it uses onnxruntime-web (bundled WASM); the
+    // Node-side onnxruntime-node has .node native bindings esbuild can't
+    // touch, and `sharp` brings its own native binaries.
+    'onnxruntime-node',
+    'sharp',
     ...builtins,
   ],
   loader: {
