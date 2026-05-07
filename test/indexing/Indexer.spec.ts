@@ -115,7 +115,7 @@ describe('Indexer', () => {
         'docs/b.md': { content: 'Body of B.', mtime: 200 },
       },
       tree: {
-        '/': { files: ['a.md'], folders: ['docs'] },
+        '': { files: ['a.md'], folders: ['docs'] },
         docs: { files: ['docs/b.md'] },
       },
     });
@@ -140,7 +140,7 @@ describe('Indexer', () => {
           mtime: 1,
         },
       },
-      tree: { '/': { files: ['a.md'] } },
+      tree: { '': { files: ['a.md'] } },
     });
 
     const indexer = new Indexer({ adapter, embedClient, engine });
@@ -155,7 +155,7 @@ describe('Indexer', () => {
   it('skips files whose mtime is unchanged on incremental rebuild', async () => {
     const adapter = buildAdapter({
       files: { 'a.md': { content: 'Body.', mtime: 100 } },
-      tree: { '/': { files: ['a.md'] } },
+      tree: { '': { files: ['a.md'] } },
     });
 
     const indexer = new Indexer({ adapter, embedClient, engine });
@@ -173,7 +173,7 @@ describe('Indexer', () => {
 
   it('re-encodes when mtime advances past the tolerance window', async () => {
     const files = { 'a.md': { content: 'Body one.', mtime: 100 } };
-    const tree = { '/': { files: ['a.md'] } };
+    const tree = { '': { files: ['a.md'] } };
     let adapter = buildAdapter({ files, tree });
     const indexer1 = new Indexer({ adapter, embedClient, engine });
     await indexer1.build();
@@ -194,7 +194,7 @@ describe('Indexer', () => {
   it('rebuild=true ignores mtime and re-encodes everything', async () => {
     const adapter = buildAdapter({
       files: { 'a.md': { content: 'Body.', mtime: 100 } },
-      tree: { '/': { files: ['a.md'] } },
+      tree: { '': { files: ['a.md'] } },
     });
 
     const indexer = new Indexer({ adapter, embedClient, engine });
@@ -213,7 +213,7 @@ describe('Indexer', () => {
         '20-Corpus/excluded.md': { content: 'should not index', mtime: 1 },
       },
       tree: {
-        '/': { files: ['a.md'], folders: ['20-Corpus'] },
+        '': { files: ['a.md'], folders: ['20-Corpus'] },
         '20-Corpus': { files: ['20-Corpus/excluded.md'] },
       },
     });
@@ -235,7 +235,7 @@ describe('Indexer', () => {
       files: {
         'empty.md': { content: '---\ntitle: T\n---\n', mtime: 1 },
       },
-      tree: { '/': { files: ['empty.md'] } },
+      tree: { '': { files: ['empty.md'] } },
     });
 
     const indexer = new Indexer({ adapter, embedClient, engine });
@@ -247,7 +247,7 @@ describe('Indexer', () => {
   it('captures errors per-file without aborting the whole build', async () => {
     const adapter = buildAdapter({
       files: { 'good.md': { content: 'kept', mtime: 1 } },
-      tree: { '/': { files: ['good.md', 'bad.md'] } },
+      tree: { '': { files: ['good.md', 'bad.md'] } },
     });
     adapter.failStatPaths.add('bad.md');
 
@@ -265,7 +265,7 @@ describe('Indexer', () => {
         'a.md': { content: 'A', mtime: 1 },
         'b.md': { content: 'B', mtime: 1 },
       },
-      tree: { '/': { files: ['a.md', 'b.md'] } },
+      tree: { '': { files: ['a.md', 'b.md'] } },
     });
 
     const events: IndexProgress[] = [];
@@ -287,7 +287,7 @@ describe('Indexer', () => {
     // First, index successfully.
     const goodAdapter = buildAdapter({
       files: { 'a.md': { content: 'Para 1.\n\nPara 2.\n\nPara 3.', mtime: 1 } },
-      tree: { '/': { files: ['a.md'] } },
+      tree: { '': { files: ['a.md'] } },
     });
     const indexer1 = new Indexer({ adapter: goodAdapter, embedClient, engine });
     await indexer1.build();

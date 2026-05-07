@@ -68,7 +68,7 @@ function buildAdapter(files: Record<string, string>): FakeAdapter {
     fileMap.set(path, { content, stat: { mtime: 1, size: content.length } });
   }
   const tree = new Map<string, { files: string[]; folders: string[] }>([
-    ['/', { files: Object.keys(files), folders: [] }],
+    ['', { files: Object.keys(files), folders: [] }],
   ]);
   return new FakeAdapter(fileMap, tree);
 }

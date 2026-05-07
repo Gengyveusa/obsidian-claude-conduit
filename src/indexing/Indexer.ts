@@ -6,7 +6,14 @@ import { splitFrontmatter } from '../util/frontmatter';
 
 import { chunk, DEFAULT_CHUNKER_OPTIONS, type ChunkerOptions } from './Chunker';
 
-const VAULT_ROOT = '/';
+/**
+ * Obsidian's DataAdapter contract: vault-relative paths with NO leading
+ * slash. The vault root is the empty string. Calling `list('/')` either
+ * returns nothing or returns paths with a leading slash that no other
+ * adapter method accepts. Confirmed empirically against a 354-file vault
+ * where `list('/')` yielded 0 files but `list('')` yielded the root.
+ */
+const VAULT_ROOT = '';
 /** mtime tolerance (seconds) for "unchanged" detection — matches contract §4. */
 const MTIME_TOLERANCE = 1.0;
 
