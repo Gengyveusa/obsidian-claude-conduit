@@ -2,7 +2,7 @@
 
 Native Obsidian plugin for Claude. Chat with your vault, retrieval-grounded, every answer cites. Diff-first writes coming in v0.5.
 
-> **Status:** v0.1.0 — Phase 3 read layer complete. Side panel, Cmd+P modal, settings tab, persistent SQLite index, transformers.js-powered local embeddings, 5 read tools (`read_note`, `list_folder`, `search_vault`, `get_backlinks`, `get_graph_neighborhood`), token + dollar budget caps, conversation logging to vault. **Pending live-vault smoke install before tagging.**
+> **Status:** v0.1.0 — chat-mode + 4 vault-API tools (`read_note`, `list_folder`, `get_backlinks`, `get_graph_neighborhood`). Side panel, Cmd+P modal, settings tab, conversation logging to vault, daily token + dollar budget caps, model fallback. **Semantic retrieval (`search_vault`, vault-qa mode) is deferred to v0.2** per [ADR-012](docs/2026-05-07-defer-retrieval-to-v02.md) — transformers.js's environment didn't survive contact with Obsidian's Electron renderer; v0.2 will pick a different embedding strategy.
 
 ---
 
@@ -42,25 +42,23 @@ No data leaves your machine without an API key set. Conversations write to your 
 - **Cmd+P quick question:** Cmd+P (or Ctrl+P) → "Sagittarius: Quick question". Single-shot Q&A in a modal — no scrollback.
 - **Build / rebuild index:** Cmd+P → "Sagittarius: Build retrieval index (incremental)" or "Rebuild retrieval index from scratch". Auto-mode (the default) runs an incremental build on every plugin load.
 
-## Smoke-test queries (per spec §1)
+## Smoke-test queries (v0.1)
 
-After install + API-key set + first auto-index completes:
+After install + API-key set, in chat mode:
 
-1. **"Where does Phase 1 stand?"**
-   *Expected:* Hangar-voice answer citing `[[50-FortressFlow/Pipeline_State]]`.
-   *Verifies:* vault-qa mode + `search_vault` + Hangar voice loaded from `21-Agents/concierge.md`.
+1. **"Summarize the file 50-FortressFlow/Pipeline_State.md"**
+   *Expected:* Hangar-voice summary, citing the file.
+   *Verifies:* `read_note` + system prompt loaded from `THAD_MAN.md` + `21-Agents/concierge.md`.
 
-2. **"Pull up everything on Soltura"**
-   *Expected:* ranked notes spanning `41-Soltura/` and `40-Quantum-Distillery/`.
-   *Verifies:* multi-folder retrieval + cosine ranking.
+2. **"What links to 70-Memory/people/harold-wallace.md?"**
+   *Expected:* list of notes that wikilink to Wallace, with line numbers where available.
+   *Verifies:* `get_backlinks` + Obsidian metadata cache integration.
 
-3. **`schema_meta.writer == 'sagittarius'`**
-   In a terminal, against `<vault>/.obsidian/plugins/obsidian-claude-conduit/index.sqlite`:
-   ```bash
-   sqlite3 <path> "SELECT value FROM schema_meta WHERE key='writer'"
-   # → sagittarius
-   ```
-   *Verifies:* embedding contract §3 schema written correctly; confirms cross-engine readability of the file.
+3. **"List the markdown files in 50-FortressFlow"**
+   *Expected:* note paths + sizes, optionally recursive.
+   *Verifies:* `list_folder`.
+
+> **v0.2 will add semantic search.** Until then, queries that name a specific note path / folder work; topical queries across the vault (*"where does Phase 1 stand?"*, *"pull up everything on Soltura"*) need a path or specific reference to anchor on.
 
 ## Development
 
