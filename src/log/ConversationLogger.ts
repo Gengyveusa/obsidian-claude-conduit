@@ -11,8 +11,16 @@ export interface ConversationTurn {
   tokensIn: number;
   tokensOut: number;
   costUsd: number;
-  /** Notes consulted via search_vault, in score-sorted order. */
+  /** search_vault hits with score + snippet, for the ### Citations body block. */
   citations: ConversationCitation[];
+  /**
+   * Vault-relative paths the agent touched via any tool (read_note,
+   * list_folder, search_vault, get_backlinks, get_graph_neighborhood).
+   * Deduped. Drives the `notes_referenced` frontmatter field.
+   */
+  notesReferenced: string[];
+  /** Names of tools the agent invoked. Drives the `tools_used` frontmatter field. */
+  toolsUsed: string[];
   /** How many tool-use steps the agent took. */
   stepCount: number;
   durationMs: number;
@@ -76,12 +84,20 @@ export class ConversationSession {
       },
       { tokens: 0, cost: 0 },
     );
+    // Derive frontmatter aggregates from the structured per-turn fields
+    // (toolsUsed, notesReferenced, citations) — not from inferred state.
+    // Pre-v0.1.1 only `citations` existed and we inferred tools_used from
+    // it, which left both lists empty whenever search_vault didn't fire.
     const tools = new Set<string>();
     const referencedNotes = new Set<string>();
     for (const turn of this.turns) {
-      if (turn.citations.length > 0) {
-        tools.add('search_vault');
+      for (const t of turn.toolsUsed) {
+        tools.add(t);
       }
+      for (const path of turn.notesReferenced) {
+        referencedNotes.add(path);
+      }
+      // citations also count as references (search_vault path).
       for (const cite of turn.citations) {
         referencedNotes.add(cite.path);
       }
