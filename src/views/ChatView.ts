@@ -70,7 +70,11 @@ export class ChatView extends ItemView {
     modeRow.createEl('label', { text: 'Mode: ' });
     const select = modeRow.createEl('select');
     select.createEl('option', { value: 'chat', text: 'Chat' });
-    select.createEl('option', { value: 'vault-qa', text: 'Vault QA' });
+    const vaultQaOption = select.createEl('option', {
+      value: 'vault-qa',
+      text: 'Vault QA (v0.2)',
+    });
+    vaultQaOption.disabled = true;
     select.value = this.mode;
     select.addEventListener('change', () => {
       if (select.value === 'chat' || select.value === 'vault-qa') {

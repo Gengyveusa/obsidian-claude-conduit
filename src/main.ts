@@ -7,19 +7,13 @@ import { makeGetBacklinksTool } from './agent/tools/get_backlinks';
 import { makeGetGraphNeighborhoodTool } from './agent/tools/get_graph_neighborhood';
 import { makeListFolderTool } from './agent/tools/list_folder';
 import { makeReadNoteTool } from './agent/tools/read_note';
-import { makeSearchVaultTool } from './agent/tools/search_vault';
 import { BudgetTracker } from './budget/BudgetTracker';
 import { PluginDataBudgetPersistence } from './budget/PluginDataBudgetPersistence';
-import { IndexCoordinator } from './indexing/IndexCoordinator';
-import { IndexPersistence } from './indexing/IndexPersistence';
 import { ConversationLogger } from './log/ConversationLogger';
 import { MetadataCacheImpl } from './obsidian/MetadataCacheImpl';
 import { loadSystemPromptParts } from './obsidian/SystemPromptLoader';
 import { VaultAdapterImpl } from './obsidian/VaultAdapterImpl';
-import { EmbedClient } from './retrieval/EmbedClient';
 import { openSqliteEngine } from './retrieval/openEngine';
-import { RetrievalLayer } from './retrieval/RetrievalLayer';
-import type { SqliteEngine } from './retrieval/SqliteEngine';
 import { SagittariusSettingTab } from './settings/SagittariusSettingTab';
 import { DEFAULT_SETTINGS, type SagittariusSettings } from './settings/types';
 import { ChatView, CHAT_VIEW_TYPE } from './views/ChatView';
@@ -29,24 +23,28 @@ const PLUGIN_NAME = 'Sagittarius — Claude Conduit';
 const RIBBON_ICON = 'message-square';
 const CONSTITUTION_PATH = 'THAD_MAN.md';
 const HANGAR_VOICE_PATH = '21-Agents/concierge.md';
-const INDEX_DB_PATH = '.obsidian/plugins/obsidian-claude-conduit/index.sqlite';
 
 interface AgentBundle {
   agent: ConduitAgent;
 }
 
 /**
- * Sagittarius plugin entry point. Phase 3e-3c-2 wires the indexing
- * pipeline into the plugin: persistent SqliteEngine, EmbedClient,
- * RetrievalLayer, search_vault tool, IndexCoordinator with
- * auto-on-load (per Thad's call) + manual rebuild command.
+ * Sagittarius plugin entry point.
+ *
+ * v0.1 ships with chat-mode + the 4 vault-API tools (read_note,
+ * list_folder, get_backlinks, get_graph_neighborhood). Semantic
+ * retrieval (search_vault, vault-qa mode) is **deferred to v0.2**
+ * per ADR-012 — three rounds of patching transformers.js's env
+ * config didn't make it work in Obsidian's renderer, and the right
+ * call was to ship what works rather than keep patching.
+ *
+ * The retrieval-layer source (Indexer, EmbedClient, RetrievalLayer,
+ * IndexCoordinator) stays in src/ for v0.2; main.ts simply doesn't
+ * import or wire it. Bundle drops back to ~926 KB.
  */
 export default class SagittariusPlugin extends Plugin {
   settings: SagittariusSettings = DEFAULT_SETTINGS;
   private agentBundle: AgentBundle | null = null;
-  private engine?: SqliteEngine;
-  private embedClient?: EmbedClient;
-  private indexCoordinator?: IndexCoordinator;
 
   override async onload(): Promise<void> {
     await this.loadSettings();
@@ -72,53 +70,32 @@ export default class SagittariusPlugin extends Plugin {
       callback: () => new QuickQuestionModal(this.app, this).open(),
     });
 
-    this.addCommand({
-      id: 'rebuild-index',
-      name: 'Rebuild retrieval index from scratch',
-      callback: () => {
-        void this.rebuildIndex();
-      },
-    });
-
-    this.addCommand({
-      id: 'build-index',
-      name: 'Build retrieval index (incremental)',
-      callback: () => {
-        void this.runBuild({ rebuild: false });
-      },
-    });
-
+    // Smoke-check the SQLite engine path. Even though we don't use it
+    // for retrieval in v0.1, it stays as a sanity probe for the bundle
+    // health and is wired up for v0.2.
     try {
-      await this.initializeIndexing();
+      const engine = await openSqliteEngine({ writerVersion: this.manifest.version });
+      const meta = engine.getSchemaMeta();
+      engine.close();
+      console.warn(
+        `[sagittarius] ${PLUGIN_NAME} v${this.manifest.version} loaded. ` +
+          `SQLite engine OK (schema v${meta.schemaVersion}, ${meta.vectorDim}-d ${meta.model}).`,
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[sagittarius] indexing init FAILED: ${msg}`);
-      new Notice(`Sagittarius: indexing init failed — ${msg}. Check the developer console.`);
-      return;
-    }
-
-    console.warn(`[sagittarius] ${PLUGIN_NAME} v${this.manifest.version} loaded.`);
-
-    if (this.settings.indexingMode === 'auto') {
-      // Background — never block plugin onload.
-      setTimeout(() => {
-        void this.autoIndexInBackground();
-      }, 0);
+      console.error(`[sagittarius] SQLite engine smoke check FAILED: ${msg}`);
+      new Notice(`Sagittarius: SQLite engine failed to initialize. Check the developer console.`);
     }
   }
 
   override onunload(): void {
     this.agentBundle = null;
-    this.engine?.close();
-    delete this.engine;
-    delete this.embedClient;
-    delete this.indexCoordinator;
     console.warn(`[sagittarius] ${PLUGIN_NAME} unloaded.`);
   }
 
-  /** True if a build is currently in flight. ChatView polls this for status. */
+  /** v0.1: indexing is deferred. Always returns false. */
   isIndexing(): boolean {
-    return this.indexCoordinator?.isBuilding() ?? false;
+    return false;
   }
 
   /**
@@ -176,123 +153,22 @@ export default class SagittariusPlugin extends Plugin {
   }
 
   /**
-   * Rebuild the index from scratch (rebuild: true). Surfaces start +
-   * complete via Notice.
+   * Build the agent + the 4 v0.1 tools. No retrieval, no embed client,
+   * no transformers.js — those are v0.2 per ADR-012.
    */
-  async rebuildIndex(): Promise<void> {
-    new Notice('Sagittarius: rebuilding index from scratch…');
-    await this.runBuild({ rebuild: true });
-  }
-
-  /** Run a build via the coordinator and surface result via Notice. */
-  private async runBuild(opts: { rebuild: boolean }): Promise<void> {
-    if (!this.indexCoordinator) {
-      new Notice('Sagittarius: indexing is not initialized — check console for errors.');
-      return;
-    }
-    try {
-      const result = await this.indexCoordinator.ensureBuilt(opts);
-      const seconds = (result.durationMs / 1000).toFixed(1);
-      new Notice(
-        `Sagittarius: indexed ${result.notesProcessed} notes (${result.chunksAdded} chunks, ` +
-          `${result.chunksSkipped} skipped) in ${seconds}s. ` +
-          (result.errors.length > 0 ? `${result.errors.length} errors — see console.` : ''),
-      );
-      if (result.errors.length > 0) {
-        for (const e of result.errors) {
-          console.warn(`[sagittarius] index error on ${e.path}: ${e.error}`);
-        }
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[sagittarius] index build FAILED: ${msg}`);
-      new Notice(`Sagittarius: index build failed — ${msg}.`);
-    }
-  }
-
-  /** Background-friendly auto-index runner. Kept silent on success. */
-  private async autoIndexInBackground(): Promise<void> {
-    if (!this.indexCoordinator) {
-      return;
-    }
-    try {
-      const result = await this.indexCoordinator.ensureBuilt();
-      console.warn(
-        `[sagittarius] auto-index: ${result.notesProcessed} notes, ${result.chunksAdded} chunks, ` +
-          `${result.chunksSkipped} skipped, ${result.durationMs}ms.`,
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[sagittarius] auto-index FAILED: ${msg}`);
-    }
-  }
-
-  /**
-   * Build the persistent engine + retrieval infrastructure. Runs once
-   * on plugin load. Loads existing index.sqlite from disk if present,
-   * else creates an empty engine (which migrate() populates with
-   * schema_meta).
-   */
-  private async initializeIndexing(): Promise<void> {
-    const adapter = new VaultAdapterImpl(this.app);
-
-    // 1. Smoke-check the WASM/SQLite engine path before doing real work.
-    const smoke = await openSqliteEngine({ writerVersion: this.manifest.version });
-    smoke.close();
-
-    // 2. Load (or create) the persistent engine.
-    const persistence = new IndexPersistence(adapter, INDEX_DB_PATH);
-    const buffer = await persistence.load();
-    this.engine = await openSqliteEngine({
-      ...(buffer ? { buffer } : {}),
-      writerVersion: this.manifest.version,
-    });
-
-    // 3. Embed client + coordinator (model loads lazily on first encode).
-    this.embedClient = new EmbedClient();
-    this.indexCoordinator = new IndexCoordinator({
-      adapter,
-      embedClient: this.embedClient,
-      engine: this.engine,
-      persistence,
-      excludePathPrefixes: this.indexExcludePrefixes(),
-    });
-  }
-
-  private indexExcludePrefixes(): string[] {
-    const prefixes = ['20-Corpus/', '.obsidian/', '.trash/'];
-    if (this.settings.conversationLogPath.length > 0) {
-      const trimmed = this.settings.conversationLogPath.replace(/\/$/, '');
-      prefixes.push(`${trimmed}/`);
-    }
-    return prefixes;
-  }
-
-  /** Build the agent + all its deps. Called lazily when chat is first invoked. */
   private async buildAgent(): Promise<AgentBundle> {
-    if (!this.engine || !this.embedClient) {
-      throw new Error(
-        'Sagittarius: indexing infrastructure is not initialized. Reload the plugin or check console for errors.',
-      );
-    }
-
     const adapter = new VaultAdapterImpl(this.app);
     const cache = new MetadataCacheImpl(this.app);
-
-    const retrieval = new RetrievalLayer({
-      selfEngine: this.engine,
-      embedClient: this.embedClient,
-    });
 
     const tools = new ToolRegistry();
     tools.register(makeReadNoteTool(adapter));
     tools.register(makeListFolderTool(adapter));
-    tools.register(makeSearchVaultTool(retrieval));
     tools.register(makeGetBacklinksTool(cache));
     tools.register(makeGetGraphNeighborhoodTool(cache));
+    // search_vault is intentionally omitted in v0.1 (ADR-012).
 
-    const budgetPersistence = new PluginDataBudgetPersistence(this);
-    const budget = await BudgetTracker.load(budgetPersistence, {
+    const persistence = new PluginDataBudgetPersistence(this);
+    const budget = await BudgetTracker.load(persistence, {
       maxTokensPerDay: this.settings.maxTokensPerDay,
       maxDollarsPerDay: this.settings.maxDollarsPerDay,
       tz: this.settings.budgetResetTimezone,
@@ -314,7 +190,6 @@ export default class SagittariusPlugin extends Plugin {
       {
         messages: client.messages,
         tools,
-        retrieval,
         budget,
         logger,
         systemPromptParts,
