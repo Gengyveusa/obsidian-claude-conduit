@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { Notice, Plugin } from 'obsidian';
+import { Notice, Plugin, requestUrl } from 'obsidian';
 
 import { ConduitAgent } from './agent/ConduitAgent';
 import { ToolRegistry } from './agent/ToolRegistry';
@@ -18,6 +18,7 @@ import { loadSystemPromptParts } from './obsidian/SystemPromptLoader';
 import { VaultAdapterImpl } from './obsidian/VaultAdapterImpl';
 import { EmbedClient } from './retrieval/EmbedClient';
 import { makeHfInferenceFactory } from './retrieval/HfInferenceFactory';
+import { makeObsidianRequestUrlFetch } from './retrieval/obsidianRequestUrl';
 import { openSqliteEngine } from './retrieval/openEngine';
 import { RetrievalLayer } from './retrieval/RetrievalLayer';
 import type { SqliteEngine } from './retrieval/SqliteEngine';
@@ -265,7 +266,10 @@ export default class SagittariusPlugin extends Plugin {
     }
 
     this.embedClient = new EmbedClient(
-      makeHfInferenceFactory({ apiKey: this.settings.huggingfaceApiKey }),
+      makeHfInferenceFactory({
+        apiKey: this.settings.huggingfaceApiKey,
+        fetchImpl: makeObsidianRequestUrlFetch(requestUrl),
+      }),
     );
     this.indexCoordinator = new IndexCoordinator({
       adapter,

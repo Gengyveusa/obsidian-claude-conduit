@@ -97,6 +97,18 @@ If accepted:
 - [ ] Bump 0.1.1 → 0.2.0; tag + release.
 - [ ] Update README to point users at `huggingface.co/settings/tokens` + add a smoke-test query that exercises `search_vault`.
 
+## Postscript — 2026-05-08, v0.2.1 patch
+
+The original ADR claimed pure `fetch()` would "sidestep every Obsidian-renderer issue." That was wrong. v0.2.0 shipped, the `Build Index` command fired, and the renderer console filled with:
+
+> `Access to fetch at 'https://api-inference.huggingface.co/models/...' from origin 'app://obsidian.md' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.`
+
+HF's Inference API does not return permissive CORS headers, and Obsidian's renderer process is bound by browser CORS preflight. Zero requests succeeded.
+
+**Fix in v0.2.1** (`src/retrieval/obsidianRequestUrl.ts`): adapt Obsidian's `requestUrl()` API to the `FetchLike` shape and inject it into `makeHfInferenceFactory()`. `requestUrl()` issues HTTP from Electron's main process, which is not subject to renderer CORS at all. The adapter is dependency-injected (takes `requestUrl` as a parameter) so `HfInferenceFactory` stays test-friendly with mocked fetches.
+
+**Lesson:** "use fetch from the renderer" is not a free architectural choice in an Obsidian plugin — every cross-origin call has to go through `requestUrl()` unless the target server explicitly allows `app://obsidian.md`. Future ADRs that touch the network layer must verify this before signing off.
+
 ## Related
 
 - [ADR-007](2026-05-04-sagittarius-q1-q3-signoff.md) — original hybrid embedding decision; (1) is one of the two paths it sketched.

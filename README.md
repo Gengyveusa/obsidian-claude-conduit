@@ -2,7 +2,7 @@
 
 Native Obsidian plugin for Claude. Chat with your vault, retrieval-grounded, every answer cites. Diff-first writes coming in v0.5.
 
-> **Status:** v0.2.0 — chat-mode + 5 vault tools (`read_note`, `list_folder`, `search_vault`, `get_backlinks`, `get_graph_neighborhood`). Side panel, Cmd+P modal, settings tab, conversation logging to vault, daily token + dollar budget caps, model fallback. **Semantic retrieval re-enabled via the HuggingFace Inference API per [ADR-013](docs/2026-05-08-hf-inference-embedding-strategy.md).** v0.1.x's transformers.js path is gone (didn't survive Obsidian's Electron renderer per ADR-012); v0.2 routes embeddings through `api-inference.huggingface.co` instead. Without an HF token, the plugin gracefully degrades to v0.1.1 behavior (chat-mode + 4 tools).
+> **Status:** v0.2.1 — chat-mode + 5 vault tools (`read_note`, `list_folder`, `search_vault`, `get_backlinks`, `get_graph_neighborhood`). Side panel, Cmd+P modal, settings tab, conversation logging to vault, daily token + dollar budget caps, model fallback. **Semantic retrieval re-enabled via the HuggingFace Inference API per [ADR-013](docs/2026-05-08-hf-inference-embedding-strategy.md).** v0.1.x's transformers.js path is gone (didn't survive Obsidian's Electron renderer per ADR-012); v0.2 routes embeddings through `api-inference.huggingface.co` instead, via Obsidian's `requestUrl()` to dodge renderer CORS (v0.2.1 fix; see ADR-013 postscript). Without an HF token, the plugin gracefully degrades to v0.1.1 behavior (chat-mode + 4 tools).
 
 ---
 
