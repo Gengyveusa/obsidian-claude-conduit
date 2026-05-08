@@ -90,6 +90,8 @@ describe('ConversationLogger', () => {
           snippet: 'Status: 14 of 16 live contacts SENT, 2 REPLIED.',
         },
       ],
+      notesReferenced: ['50-FortressFlow/Pipeline_State.md'],
+      toolsUsed: ['search_vault'],
       stepCount: 2,
       durationMs: 1234,
     });
@@ -123,6 +125,8 @@ describe('ConversationLogger', () => {
       tokensOut: 50,
       costUsd: 0.001,
       citations: [],
+      notesReferenced: [],
+      toolsUsed: [],
       stepCount: 1,
       durationMs: 100,
     };
@@ -155,6 +159,8 @@ describe('ConversationLogger', () => {
       tokensOut: 1,
       costUsd: 0,
       citations: [cite('a.md'), cite('b.md'), cite('a.md')],
+      notesReferenced: [],
+      toolsUsed: ['search_vault'],
       stepCount: 1,
       durationMs: 1,
     });
@@ -174,10 +180,59 @@ describe('ConversationLogger', () => {
       tokensOut: 1,
       costUsd: 0,
       citations: [],
+      notesReferenced: [],
+      toolsUsed: [],
       stepCount: 1,
       durationMs: 1,
     });
     expect(adapter.writes[0].content).not.toContain('### Citations');
+  });
+
+  it('frontmatter tools_used + notes_referenced come from explicit fields (not inferred)', async () => {
+    const logger = new ConversationLogger(adapter, 'log', clock, () => 'sess');
+    const session = logger.startSession('claude-sonnet-4-6');
+    await session.append({
+      userMessage: 'summarize a.md',
+      assistantMessage: 'done',
+      mode: 'chat',
+      model: 'claude-sonnet-4-6',
+      tokensIn: 1,
+      tokensOut: 1,
+      costUsd: 0,
+      citations: [], // no search_vault hit
+      notesReferenced: ['a.md', 'b.md'],
+      toolsUsed: ['read_note', 'list_folder'],
+      stepCount: 2,
+      durationMs: 50,
+    });
+    const content = adapter.writes[0].content;
+    expect(content).toContain('tools_used: [read_note, list_folder]');
+    expect(content).toMatch(/notes_referenced: \[\[\[a\.md\]\], \[\[b\.md\]\]\]/);
+  });
+
+  it('merges notesReferenced + citation paths in frontmatter without duplicates', async () => {
+    const logger = new ConversationLogger(adapter, 'log', clock, () => 'sess');
+    const session = logger.startSession('claude-sonnet-4-6');
+    await session.append({
+      userMessage: 'q',
+      assistantMessage: 'a',
+      mode: 'vault-qa',
+      model: 'claude-sonnet-4-6',
+      tokensIn: 1,
+      tokensOut: 1,
+      costUsd: 0,
+      citations: [{ path: 'shared.md', chunkIndex: 0, score: 0.9, snippet: 's' }],
+      notesReferenced: ['shared.md', 'extra.md'],
+      toolsUsed: ['search_vault', 'read_note'],
+      stepCount: 1,
+      durationMs: 1,
+    });
+    const content = adapter.writes[0].content;
+    // Inspect just the frontmatter (everything before the closing ---).
+    const frontmatter = content.slice(0, content.indexOf('\n---\n', 4));
+    const matches = frontmatter.match(/\[\[shared\.md\]\]/g) ?? [];
+    expect(matches.length).toBe(1);
+    expect(frontmatter).toContain('[[extra.md]]');
   });
 
   it('default idGen produces unique-looking session ids', () => {

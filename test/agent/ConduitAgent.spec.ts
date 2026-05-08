@@ -406,6 +406,72 @@ describe('ConduitAgent', () => {
       snippet: 'snippet-a',
     });
   });
+
+  it('records toolsUsed + notesReferenced for non-search_vault tools (v0.1.1)', async () => {
+    const create = (() => {
+      let n = 0;
+      return (_p: MessageCreateParams): Promise<Message> => {
+        n++;
+        if (n === 1) {
+          return Promise.resolve(
+            makeMessage({
+              stop_reason: 'tool_use',
+              toolUses: [{ id: 'rn1', name: 'read_note', input: { path: 'a.md' } }],
+            }),
+          );
+        }
+        if (n === 2) {
+          return Promise.resolve(
+            makeMessage({
+              stop_reason: 'tool_use',
+              toolUses: [{ id: 'lf1', name: 'list_folder', input: { path: 'docs' } }],
+            }),
+          );
+        }
+        return Promise.resolve(makeMessage({ stop_reason: 'end_turn', text: 'done' }));
+      };
+    })();
+    const { deps, logger, tools } = makeDeps({ messages: { create } });
+    tools.register({
+      name: 'read_note',
+      description: 'read',
+      inputSchema: z.object({ path: z.string() }),
+      jsonSchema: { type: 'object', properties: { path: { type: 'string' } } },
+      handler: ({ path }) =>
+        Promise.resolve({
+          path,
+          frontmatter: null,
+          body: 'body',
+          mtime: 1,
+          size_bytes: 4,
+        }),
+    });
+    tools.register({
+      name: 'list_folder',
+      description: 'list',
+      inputSchema: z.object({ path: z.string() }),
+      jsonSchema: { type: 'object', properties: { path: { type: 'string' } } },
+      handler: ({ path }) =>
+        Promise.resolve({
+          folder: path,
+          notes: [
+            { path: 'docs/x.md', size_bytes: 1, mtime: 1 },
+            { path: 'docs/y.md', size_bytes: 1, mtime: 1 },
+          ],
+          subfolders: [],
+        }),
+    });
+    const agent = new ConduitAgent(deps, settings);
+    await agent.chat('q', [], 'chat');
+
+    const turn = logger.sessions[0]?.turns[0];
+    expect(turn).toBeDefined();
+    expect(turn?.toolsUsed).toEqual(expect.arrayContaining(['read_note', 'list_folder']));
+    expect(turn?.toolsUsed).toHaveLength(2);
+    expect(turn?.notesReferenced).toEqual(
+      expect.arrayContaining(['a.md', 'docs/x.md', 'docs/y.md']),
+    );
+  });
 });
 
 describe('isOverloaded()', () => {

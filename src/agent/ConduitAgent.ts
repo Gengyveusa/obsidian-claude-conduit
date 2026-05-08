@@ -124,6 +124,8 @@ export class ConduitAgent {
       score: r.score,
       snippet: r.snippet,
     }));
+    const toolsUsed = new Set<string>();
+    const notesReferenced = new Set<string>();
     let tokensIn = 0;
     let tokensOut = 0;
 
@@ -146,7 +148,9 @@ export class ConduitAgent {
 
       if (response.stop_reason === 'tool_use') {
         const toolUses = response.content.filter(isToolUseBlock);
-        const toolResults = await Promise.all(toolUses.map((tu) => this.runTool(tu, citations)));
+        const toolResults = await Promise.all(
+          toolUses.map((tu) => this.runTool(tu, citations, toolsUsed, notesReferenced)),
+        );
         messages.push({ role: 'user', content: toolResults });
         continue;
       }
@@ -172,6 +176,12 @@ export class ConduitAgent {
     // 6. Log the turn to the vault. The session is per-chat-turn-batch in
     // v0.1; the caller (ChatView) holds onto it across turns. For now we
     // mint a fresh session per call — refactor when ChatView lands.
+    // Pre-retrieval (vault-qa mode) seeds search_vault citations directly,
+    // so add their paths to notesReferenced too.
+    for (const c of citations) {
+      notesReferenced.add(c.path);
+    }
+
     const session = this.deps.logger.startSession(this.settings.defaultModel);
     await session.append({
       userMessage,
@@ -182,6 +192,8 @@ export class ConduitAgent {
       tokensOut,
       costUsd,
       citations,
+      notesReferenced: [...notesReferenced],
+      toolsUsed: [...toolsUsed],
       stepCount,
       durationMs,
     });
@@ -234,10 +246,15 @@ export class ConduitAgent {
   private async runTool(
     tu: ToolUseBlock,
     citations: ConversationCitation[],
+    toolsUsed: Set<string>,
+    notesReferenced: Set<string>,
   ): Promise<ToolResultBlockParam> {
+    // Always record the tool name, even if the call fails — the agent
+    // tried to use it, which is the signal we want in the conversation log.
+    toolsUsed.add(tu.name);
     try {
       const result = await this.deps.tools.execute(tu.name, tu.input);
-      // Track citations from search_vault tool calls.
+      // Track citations + note references from tool calls.
       if (tu.name === 'search_vault' && Array.isArray(result)) {
         for (const r of result as Array<{
           path: string;
@@ -251,7 +268,13 @@ export class ConduitAgent {
             score: r.score,
             snippet: r.text,
           });
+          notesReferenced.add(r.path);
         }
+      }
+      // Extract note paths from non-search-vault tools so they show up
+      // in the conversation log's `notes_referenced` frontmatter.
+      for (const path of extractNotePaths(tu.name, tu.input, result)) {
+        notesReferenced.add(path);
       }
       return {
         type: 'tool_result',
@@ -326,6 +349,89 @@ function extractText(content: Message['content']): string {
     .filter((b): b is TextBlock => b.type === 'text')
     .map((b) => b.text)
     .join('');
+}
+
+/**
+ * Extract vault-relative note paths from a tool call's input + result, so
+ * the conversation log can record what the agent actually touched. Knows
+ * the v0.1 tool surface; unknown tools contribute nothing.
+ *
+ * Why duplicate the tool surface here rather than asking each tool to
+ * declare its own extractor: the v0.1 surface is fixed and small (5
+ * tools), and a per-tool extractor protocol is bigger surface area than
+ * the deduplication saves. Revisit when the tool count crosses ~10.
+ */
+function extractNotePaths(
+  toolName: string,
+  input: unknown,
+  result: unknown,
+): string[] {
+  const paths: string[] = [];
+  const inputObj = isRecord(input) ? input : null;
+  const resultObj = isRecord(result) ? result : null;
+
+  switch (toolName) {
+    case 'read_note': {
+      // Input: { path }. Result: { path, ... } | null.
+      if (resultObj && typeof resultObj['path'] === 'string') {
+        paths.push(resultObj['path']);
+      } else if (inputObj && typeof inputObj['path'] === 'string') {
+        paths.push(inputObj['path']);
+      }
+      break;
+    }
+    case 'list_folder': {
+      // Result: { folder, notes: [{ path, ... }, ...], subfolders }.
+      if (resultObj && Array.isArray(resultObj['notes'])) {
+        for (const n of resultObj['notes']) {
+          if (isRecord(n) && typeof n['path'] === 'string') {
+            paths.push(n['path']);
+          }
+        }
+      }
+      break;
+    }
+    case 'get_backlinks': {
+      // Result: { target, inbound: [{ path, ... }, ...], total }.
+      if (resultObj) {
+        if (typeof resultObj['target'] === 'string') {
+          paths.push(resultObj['target']);
+        }
+        if (Array.isArray(resultObj['inbound'])) {
+          for (const i of resultObj['inbound']) {
+            if (isRecord(i) && typeof i['path'] === 'string') {
+              paths.push(i['path']);
+            }
+          }
+        }
+      }
+      break;
+    }
+    case 'get_graph_neighborhood': {
+      // Result: { origin, nodes: [{ path, ... }, ...], edges }.
+      if (resultObj) {
+        if (typeof resultObj['origin'] === 'string') {
+          paths.push(resultObj['origin']);
+        }
+        if (Array.isArray(resultObj['nodes'])) {
+          for (const n of resultObj['nodes']) {
+            if (isRecord(n) && typeof n['path'] === 'string') {
+              paths.push(n['path']);
+            }
+          }
+        }
+      }
+      break;
+    }
+    // search_vault is handled separately by the citations capture path.
+    default:
+      break;
+  }
+  return paths;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 /** True if the error indicates upstream overload (HTTP 503 or 529). */
