@@ -13,6 +13,12 @@ export interface SagittariusSettings {
   defaultModel: 'claude-sonnet-4-6' | 'claude-opus-4-7' | 'claude-haiku-4-5-20251001';
   fallbackModel: 'claude-sonnet-4-6' | 'claude-opus-4-7' | 'claude-haiku-4-5-20251001';
 
+  // Embeddings (per ADR-013): HuggingFace Inference API.
+  // Free read-token from huggingface.co/settings/tokens. Required for
+  // search_vault / vault-qa mode; chat-mode + 4 vault-API tools work
+  // without it.
+  huggingfaceApiKey: string;
+
   // Retrieval
   indexingMode: 'auto' | 'manual';
   retrievalK: number;
@@ -40,7 +46,9 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
   defaultModel: 'claude-sonnet-4-6',
   fallbackModel: 'claude-opus-4-7',
 
-  indexingMode: 'auto',
+  huggingfaceApiKey: '',
+
+  indexingMode: 'manual',
   retrievalK: 8,
   embeddingProvider: 'local',
   voyageApiKey: '',

@@ -72,9 +72,14 @@ export class ChatView extends ItemView {
     select.createEl('option', { value: 'chat', text: 'Chat' });
     const vaultQaOption = select.createEl('option', {
       value: 'vault-qa',
-      text: 'Vault QA (v0.2)',
+      text: 'Vault QA',
     });
-    vaultQaOption.disabled = true;
+    // vault-qa requires retrieval to be initialized (HF token set);
+    // gracefully disable when not, like v0.1.1.
+    if (!this.plugin.hasRetrieval()) {
+      vaultQaOption.disabled = true;
+      vaultQaOption.text = 'Vault QA (set HuggingFace token)';
+    }
     select.value = this.mode;
     select.addEventListener('change', () => {
       if (select.value === 'chat' || select.value === 'vault-qa') {

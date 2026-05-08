@@ -2,7 +2,7 @@
 
 Native Obsidian plugin for Claude. Chat with your vault, retrieval-grounded, every answer cites. Diff-first writes coming in v0.5.
 
-> **Status:** v0.1.0 — chat-mode + 4 vault-API tools (`read_note`, `list_folder`, `get_backlinks`, `get_graph_neighborhood`). Side panel, Cmd+P modal, settings tab, conversation logging to vault, daily token + dollar budget caps, model fallback. **Semantic retrieval (`search_vault`, vault-qa mode) is deferred to v0.2** per [ADR-012](docs/2026-05-07-defer-retrieval-to-v02.md) — transformers.js's environment didn't survive contact with Obsidian's Electron renderer; v0.2 will pick a different embedding strategy.
+> **Status:** v0.2.0 — chat-mode + 5 vault tools (`read_note`, `list_folder`, `search_vault`, `get_backlinks`, `get_graph_neighborhood`). Side panel, Cmd+P modal, settings tab, conversation logging to vault, daily token + dollar budget caps, model fallback. **Semantic retrieval re-enabled via the HuggingFace Inference API per [ADR-013](docs/2026-05-08-hf-inference-embedding-strategy.md).** v0.1.x's transformers.js path is gone (didn't survive Obsidian's Electron renderer per ADR-012); v0.2 routes embeddings through `api-inference.huggingface.co` instead. Without an HF token, the plugin gracefully degrades to v0.1.1 behavior (chat-mode + 4 tools).
 
 ---
 
@@ -18,11 +18,11 @@ Sagittarius is **desktop-only** (`isDesktopOnly: true` per ADR-007). It will not
 
 ## Setup
 
-1. Get an Anthropic API key from [console.anthropic.com](https://console.anthropic.com).
-2. Settings → **Sagittarius — Claude Conduit** → paste the key into the *API key* field.
+1. **Anthropic API key** — get one from [console.anthropic.com](https://console.anthropic.com). Required for chat. Settings → **Sagittarius — Claude Conduit** → paste it into the *API key* field.
+2. **HuggingFace API key (optional)** — required only for semantic search / Vault QA mode. Free read-token from [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens). Settings → Sagittarius → *HuggingFace API key*.
 3. Pick your default + fallback model (Sonnet 4.6 is the recommended default; Opus 4.7 the fallback on overload).
 4. Optionally adjust the daily token / dollar caps (defaults: 200K tokens / $10 / day, midnight reset in `America/Los_Angeles`).
-5. The first time the plugin loads after API-key set, it will auto-index your vault in the background. First run downloads the `all-MiniLM-L6-v2` model (~22 MB, cached locally for subsequent runs). Watch the developer console for `auto-index: N notes, M chunks, …`.
+5. **Build the index** when you're ready: `Cmd+P` → "Sagittarius: Build retrieval index (incremental)". First build over a typical vault takes ~30s of HF API time; subsequent edits incrementally rebuild. v0.2 default `indexingMode` is `'manual'` per ADR-013 — no surprise network traffic.
 
 ### Security note
 
@@ -42,23 +42,20 @@ No data leaves your machine without an API key set. Conversations write to your 
 - **Cmd+P quick question:** Cmd+P (or Ctrl+P) → "Sagittarius: Quick question". Single-shot Q&A in a modal — no scrollback.
 - **Build / rebuild index:** Cmd+P → "Sagittarius: Build retrieval index (incremental)" or "Rebuild retrieval index from scratch". Auto-mode (the default) runs an incremental build on every plugin load.
 
-## Smoke-test queries (v0.1)
+## Smoke-test queries
 
-After install + API-key set, in chat mode:
+### Chat mode (works without HF token)
 
-1. **"Summarize the file 50-FortressFlow/Pipeline_State.md"**
-   *Expected:* Hangar-voice summary, citing the file.
-   *Verifies:* `read_note` + system prompt loaded from `THAD_MAN.md` + `21-Agents/concierge.md`.
+1. **"Summarize the file 50-FortressFlow/Pipeline_State.md"** — verifies `read_note` + system prompt loading.
+2. **"What links to 70-Memory/people/harold-wallace.md?"** — verifies `get_backlinks` + metadata cache integration.
+3. **"List the markdown files in 50-FortressFlow"** — verifies `list_folder`.
 
-2. **"What links to 70-Memory/people/harold-wallace.md?"**
-   *Expected:* list of notes that wikilink to Wallace, with line numbers where available.
-   *Verifies:* `get_backlinks` + Obsidian metadata cache integration.
+### Vault QA mode (v0.2, requires HF token + index built)
 
-3. **"List the markdown files in 50-FortressFlow"**
-   *Expected:* note paths + sizes, optionally recursive.
-   *Verifies:* `list_folder`.
+Switch the chat dropdown to **Vault QA**, then ask:
 
-> **v0.2 will add semantic search.** Until then, queries that name a specific note path / folder work; topical queries across the vault (*"where does Phase 1 stand?"*, *"pull up everything on Soltura"*) need a path or specific reference to anchor on.
+4. **"Where does Phase 1 stand?"** — verifies `search_vault` against your indexed vault. Should return a Hangar-voice answer citing `[[50-FortressFlow/Pipeline_State]]` without you naming the file.
+5. **"Pull up everything on Soltura"** — verifies multi-folder retrieval. Should rank notes spanning `41-Soltura/` and `40-Quantum-Distillery/`.
 
 ## Development
 
