@@ -32,6 +32,7 @@ export class SagittariusSettingTab extends PluginSettingTab {
     });
 
     this.renderApiSection(containerEl);
+    this.renderEmbeddingsSection(containerEl);
     this.renderRetrievalSection(containerEl);
     this.renderBudgetSection(containerEl);
     this.renderLogSection(containerEl);
@@ -90,6 +91,32 @@ export class SagittariusSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }),
       );
+  }
+
+  private renderEmbeddingsSection(parent: HTMLElement): void {
+    parent.createEl('h3', { text: 'Embeddings (HuggingFace Inference API)' });
+    parent.createEl('p', {
+      cls: 'setting-item-description',
+      text:
+        "Enables search_vault + Vault QA mode. v0.2 routes embeddings through HuggingFace's Inference API per ADR-013. Free read-token from huggingface.co/settings/tokens. Without a token, chat-mode + 4 vault-API tools still work — just no semantic search.",
+    });
+
+    new Setting(parent)
+      .setName('HuggingFace API key')
+      .setDesc(
+        'Stored in this plugin\'s data directory; never sent anywhere except api-inference.huggingface.co. ' +
+          'Make sure your vault gitignores .obsidian/plugins/obsidian-claude-conduit/data.json.',
+      )
+      .addText((text) => {
+        text.inputEl.type = 'password';
+        text
+          .setPlaceholder('hf_...')
+          .setValue(this.plugin.settings.huggingfaceApiKey)
+          .onChange(async (value) => {
+            this.plugin.settings.huggingfaceApiKey = value.trim();
+            await this.plugin.saveSettings();
+          });
+      });
   }
 
   private renderRetrievalSection(parent: HTMLElement): void {

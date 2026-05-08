@@ -1,7 +1,5 @@
 import { VECTOR_DIM } from './SqliteEngine';
 
-const MODEL_NAME = 'Xenova/all-MiniLM-L6-v2';
-
 /**
  * Minimal pipeline shape. transformers.js's actual return type is
  * elaborate (a `FeatureExtractionPipeline` with overloads); we only need
@@ -15,55 +13,14 @@ export interface EmbedPipeline {
 }
 
 /**
- * Factory that produces an EmbedPipeline. Default implementation
- * dynamic-imports `@xenova/transformers` so its ~3 MB of code + ONNX
- * runtime never runs on plugin load — only when `encode()` is first
- * called. Tests inject a deterministic stub.
+ * Factory that produces an EmbedPipeline. Tests inject a deterministic
+ * stub; production wires `makeHfInferenceFactory` per ADR-013 (v0.2)
+ * or another factory in later phases. There is no default — callers
+ * must inject one — so esbuild never traces a transformers.js fallback
+ * into the bundle (ADR-012 deferred that path; pulling its symbol here
+ * was bloating main.js to 2 MB even when unused).
  */
 export type EmbedPipelineFactory = () => Promise<EmbedPipeline>;
-
-const defaultFactory: EmbedPipelineFactory = async () => {
-  // Dynamic import keeps transformers.js out of the synchronous main.js
-  // load path. esbuild still bundles it (CJS output), but parse-evaluation
-  // is deferred to first call.
-  // FFI boundary: transformers.js typings are too elaborate to retype here.
-  // TODO: type — narrow once @xenova/transformers ships stable .d.ts.
-  const transformers = (await import('@xenova/transformers')) as unknown as {
-    pipeline: (task: string, model: string) => Promise<EmbedPipeline>;
-    env: Record<string, unknown>;
-  };
-
-  // In Obsidian's Electron renderer, Node's `fs` and `path` ARE available,
-  // so transformers.js's env detection sets RUNNING_LOCALLY = true and
-  // tries to fs-cache models at env.cacheDir. cacheDir ends up undefined
-  // (env-paths fails or process.env isn't shaped as expected) → fs.* gets
-  // called with `undefined` → "The 'path' argument must be of type string"
-  // thrown 354 times.
-  //
-  // Force the browser-cache code path:
-  //   - useFS / useFSCache: false (don't try local cache writes)
-  //   - useBrowserCache: true (use renderer's Cache Storage instead)
-  //   - allowLocalModels: false (skip the local-model lookup that also
-  //     hits the bad cacheDir)
-  //   - allowRemoteModels: true (download from HF CDN as needed)
-  //   - cacheDir: '' (defensive: if any code path still uses cacheDir
-  //     after the flag checks, hand it a string instead of undefined)
-  //
-  // The shotgun approach is intentional — different transformers.js code
-  // paths read different flags, and getting the model to load matters
-  // more than minimal config.
-  const env = transformers.env;
-  env['useFS'] = false;
-  env['useFSCache'] = false;
-  env['useBrowserCache'] = true;
-  env['useCustomCache'] = false;
-  env['allowLocalModels'] = false;
-  env['allowRemoteModels'] = true;
-  env['cacheDir'] = '';
-  env['localModelPath'] = '';
-
-  return transformers.pipeline('feature-extraction', MODEL_NAME);
-};
 
 /**
  * Wraps `@xenova/transformers`' feature-extraction pipeline for the
@@ -78,7 +35,7 @@ const defaultFactory: EmbedPipelineFactory = async () => {
 export class EmbedClient {
   private pipelinePromise: Promise<EmbedPipeline> | null = null;
 
-  constructor(private readonly factory: EmbedPipelineFactory = defaultFactory) {}
+  constructor(private readonly factory: EmbedPipelineFactory) {}
 
   /**
    * Encode a single text string to a 384-d normalized embedding.
@@ -92,7 +49,7 @@ export class EmbedClient {
     if (result.data.length !== VECTOR_DIM) {
       throw new Error(
         `EmbedClient.encode: pipeline returned ${result.data.length} dims, expected ${VECTOR_DIM}. ` +
-          `Wrong model loaded? Expected ${MODEL_NAME}.`,
+          `Wrong model wired into the EmbedPipelineFactory?`,
       );
     }
     return new Float32Array(result.data);
