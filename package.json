@@ -1,6 +1,6 @@
 {
   "name": "obsidian-claude-conduit",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Native Obsidian plugin for Claude — chat with your vault, retrieval-grounded, diff-first writes (coming v0.5).",
   "main": "main.js",
   "type": "module",
