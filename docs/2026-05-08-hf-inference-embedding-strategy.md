@@ -109,6 +109,22 @@ HF's Inference API does not return permissive CORS headers, and Obsidian's rende
 
 **Lesson:** "use fetch from the renderer" is not a free architectural choice in an Obsidian plugin — every cross-origin call has to go through `requestUrl()` unless the target server explicitly allows `app://obsidian.md`. Future ADRs that touch the network layer must verify this before signing off.
 
+## Postscript #2 — 2026-05-08, v0.2.2 patch
+
+v0.2.1 fixed CORS, but the very next `Build Index` returned a wall of:
+
+> `HfInferenceFactory: 404 from https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2: <pre>Cannot POST /models/sentence-transformers/all-MiniLM-L6-v2</pre>`
+
+The legacy "Hosted Inference API" at `api-inference.huggingface.co/models/{id}` was retired and replaced by the "Inference Providers" router architecture. The new endpoint format for serverless feature-extraction is:
+
+```
+https://router.huggingface.co/hf-inference/models/{MODEL_ID}/pipeline/feature-extraction
+```
+
+Request body (`{"inputs": [...]}`) and response (`number[][]`) are unchanged, so the fix is a one-line `HF_ENDPOINT` constant change in `src/retrieval/HfInferenceFactory.ts` (plus the same swap in the per-call endpoint construction inside the factory body). Tests reference the exported `HF_ENDPOINT` symbolically and pick up the new URL automatically.
+
+**Lesson:** when bypassing an SDK to call a hosted API directly, the URL is part of the contract — and HF, like every other model gateway, evolves theirs. The `embed_interface.md` contract should reference the SDK convention or a stable proxy, not a hardcoded vendor URL. Filing a follow-up to either (a) bundle `@huggingface/inference` so URL evolution is the SDK's problem, or (b) version-pin the endpoint pattern in the contract doc.
+
 ## Related
 
 - [ADR-007](2026-05-04-sagittarius-q1-q3-signoff.md) — original hybrid embedding decision; (1) is one of the two paths it sketched.
