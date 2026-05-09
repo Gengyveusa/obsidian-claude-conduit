@@ -2,12 +2,17 @@ import type { EmbedPipeline, EmbedPipelineFactory } from './EmbedClient';
 import { VECTOR_DIM } from './SqliteEngine';
 
 /**
- * Embedding contract §1 model name. HF Inference API hosts this exact
- * model — output is bit-compatible (within FP rounding) with the local
- * sentence-transformers/all-MiniLM-L6-v2 that corpus-ingest uses.
+ * Embedding contract §1 model name. HF Inference (routed via the
+ * `router.huggingface.co` "Inference Providers" gateway) hosts this
+ * exact model — output is bit-compatible (within FP rounding) with the
+ * local sentence-transformers/all-MiniLM-L6-v2 that corpus-ingest uses.
+ *
+ * The legacy `api-inference.huggingface.co/models/{id}` endpoint was
+ * retired (returns 404 `Cannot POST /models/...`); v0.2.2 switched to
+ * the router URL pattern. See ADR-013 postscript #2.
  */
 const HF_MODEL = 'sentence-transformers/all-MiniLM-L6-v2';
-const HF_ENDPOINT = `https://api-inference.huggingface.co/models/${HF_MODEL}`;
+const HF_ENDPOINT = `https://router.huggingface.co/hf-inference/models/${HF_MODEL}/pipeline/feature-extraction`;
 
 /** Max wait we'll honor on a cold-start retry, regardless of HF's hint. */
 const MAX_COLD_START_WAIT_MS = 60_000;
@@ -71,7 +76,7 @@ export function makeHfInferenceFactory(opts: HfFactoryOptions): EmbedPipelineFac
     const fetchImpl: FetchLike = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
     const sleepImpl = opts.sleepImpl ?? defaultSleep;
     const model = opts.model ?? HF_MODEL;
-    const endpoint = `https://api-inference.huggingface.co/models/${model}`;
+    const endpoint = `https://router.huggingface.co/hf-inference/models/${model}/pipeline/feature-extraction`;
 
     const pipeline: EmbedPipeline = async (text) => {
       const inputs = Array.isArray(text) ? text : [text];
