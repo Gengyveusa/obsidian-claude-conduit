@@ -47,6 +47,9 @@ class FakeVaultAdapter implements VaultAdapter {
   list(): Promise<{ files: string[]; folders: string[] }> {
     return Promise.resolve({ files: [...this.files.keys()], folders: [] });
   }
+  listAllMarkdown(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
 }
 
 function adapterWith(files: Record<string, FakeFile>): VaultAdapter {

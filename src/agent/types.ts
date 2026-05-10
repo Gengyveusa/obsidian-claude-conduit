@@ -61,6 +61,14 @@ export interface VaultAdapter {
   mkdir(path: string): Promise<void>;
   stat(path: string): Promise<VaultStat | null>;
   list(folderPath: string): Promise<{ files: string[]; folders: string[] }>;
+  /**
+   * Return every `.md` file in the vault as a flat list of vault-relative
+   * paths. Production wraps `app.vault.getMarkdownFiles()`; tests can
+   * derive from a map. Used by the Indexer instead of recursing through
+   * `list()` because Obsidian's DataAdapter behavior on the empty/root
+   * folder has been unreliable across versions (v0.2.3 walker fix).
+   */
+  listAllMarkdown(): Promise<string[]>;
 }
 
 export interface VaultStat {

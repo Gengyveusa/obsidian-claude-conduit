@@ -39,6 +39,9 @@ class FakeAdapter implements VaultAdapter {
   list(): Promise<{ files: string[]; folders: string[] }> {
     return Promise.resolve({ files: [], folders: [] });
   }
+  listAllMarkdown(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
 }
 
 const PATH = '.obsidian/plugins/obsidian-claude-conduit/index.sqlite';
