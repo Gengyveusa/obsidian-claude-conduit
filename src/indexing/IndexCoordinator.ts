@@ -42,7 +42,6 @@ export class IndexCoordinator {
       embedClient: opts.embedClient,
       engine: opts.engine,
       ...(opts.excludePathPrefixes ? { excludePathPrefixes: opts.excludePathPrefixes } : {}),
-      ...(opts.rootPath !== undefined ? { rootPath: opts.rootPath } : {}),
       ...(opts.chunkerOptions ? { chunkerOptions: opts.chunkerOptions } : {}),
       onProgress: (p) => this.opts.onProgress?.(p),
     });

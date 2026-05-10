@@ -13,7 +13,7 @@ import type { VaultAdapter, VaultStat } from '../agent/types';
 export class VaultAdapterImpl implements VaultAdapter {
   private readonly inner: DataAdapter;
 
-  constructor(app: App) {
+  constructor(private readonly app: App) {
     this.inner = app.vault.adapter;
   }
 
@@ -57,5 +57,9 @@ export class VaultAdapterImpl implements VaultAdapter {
   async list(folderPath: string): Promise<{ files: string[]; folders: string[] }> {
     const listed: ListedFiles = await this.inner.list(folderPath);
     return { files: listed.files, folders: listed.folders };
+  }
+
+  listAllMarkdown(): Promise<string[]> {
+    return Promise.resolve(this.app.vault.getMarkdownFiles().map((f) => f.path));
   }
 }

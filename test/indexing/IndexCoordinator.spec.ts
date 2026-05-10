@@ -60,6 +60,9 @@ class FakeAdapter implements VaultAdapter {
   list(folder: string): Promise<{ files: string[]; folders: string[] }> {
     return Promise.resolve(this.tree.get(folder) ?? { files: [], folders: [] });
   }
+  listAllMarkdown(): Promise<string[]> {
+    return Promise.resolve([...this.files.keys()].filter((p) => p.endsWith('.md')));
+  }
 }
 
 function buildAdapter(files: Record<string, string>): FakeAdapter {

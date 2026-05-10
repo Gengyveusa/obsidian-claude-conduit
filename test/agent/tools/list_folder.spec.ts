@@ -46,6 +46,9 @@ class FakeVaultAdapter implements VaultAdapter {
   list(folder: string): Promise<{ files: string[]; folders: string[] }> {
     return Promise.resolve(this.tree.folders.get(folder) ?? { files: [], folders: [] });
   }
+  listAllMarkdown(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
 }
 
 function buildTree(spec: Record<string, { files?: string[]; folders?: string[] }>): VaultAdapter {

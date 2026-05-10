@@ -7,14 +7,14 @@ import { splitFrontmatter } from '../util/frontmatter';
 import { chunk, DEFAULT_CHUNKER_OPTIONS, type ChunkerOptions } from './Chunker';
 
 /**
- * Obsidian's DataAdapter contract: vault-relative paths with NO leading
- * slash. The vault root is the empty string. Calling `list('/')` either
- * returns nothing or returns paths with a leading slash that no other
- * adapter method accepts. Confirmed empirically against a 354-file vault
- * where `list('/')` yielded 0 files but `list('')` yielded the root.
+ * mtime tolerance (seconds) for "unchanged" detection — matches contract §4.
+ *
+ * Note (v0.2.3): file enumeration moved from a recursive `adapter.list()`
+ * walker to `adapter.listAllMarkdown()`. Empirically `app.vault.adapter.list('')`
+ * threw silently in production Obsidian, so the walker terminated with 0
+ * files. The new path uses Obsidian's `app.vault.getMarkdownFiles()` which
+ * is the canonical enumeration API.
  */
-const VAULT_ROOT = '';
-/** mtime tolerance (seconds) for "unchanged" detection — matches contract §4. */
 const MTIME_TOLERANCE = 1.0;
 
 export interface IndexProgress {
@@ -36,8 +36,6 @@ export interface IndexerOptions {
    * outputs.
    */
   excludePathPrefixes?: string[];
-  /** Vault root for the walker. Defaults to '/'. */
-  rootPath?: string;
   /** Chunking parameters. Defaults to contract-§2 1500/200. */
   chunkerOptions?: ChunkerOptions;
   /** Progress callback fired before each file is processed. */
@@ -74,7 +72,6 @@ export class Indexer {
 
     const allPaths = await collectFiles(
       this.opts.adapter,
-      this.opts.rootPath ?? VAULT_ROOT,
       this.opts.excludePathPrefixes ?? [],
       this.opts.onProgress,
     );
@@ -160,56 +157,28 @@ export class Indexer {
   }
 }
 
-/** Walk the vault breadth-first, returning all `.md` paths under root. */
+/**
+ * Return every `.md` path the vault knows about, minus excluded prefixes.
+ *
+ * Backed by `adapter.listAllMarkdown()` — production wraps Obsidian's
+ * `app.vault.getMarkdownFiles()`. The previous BFS walker through
+ * `adapter.list()` silently terminated when `list('')` threw, leaving
+ * the indexer with 0 files (v0.2.3 fix).
+ */
 async function collectFiles(
   adapter: VaultAdapter,
-  root: string,
   excludePrefixes: string[],
   onProgress: ((progress: IndexProgress) => void) | undefined,
 ): Promise<string[]> {
-  const out: string[] = [];
-  const queue: string[] = [root];
-  const visited = new Set<string>();
-
-  while (queue.length > 0) {
-    const folder = queue.shift();
-    if (folder === undefined || visited.has(folder)) {
-      continue;
-    }
-    visited.add(folder);
-
-    if (isExcluded(folder, excludePrefixes)) {
-      continue;
-    }
-
-    let listing: { files: string[]; folders: string[] };
-    try {
-      listing = await adapter.list(folder);
-    } catch {
-      // Some adapters fail on root-level non-existent paths — skip.
-      continue;
-    }
-
-    for (const file of listing.files) {
-      if (file.endsWith('.md') && !isExcluded(file, excludePrefixes)) {
-        out.push(file);
-      }
-    }
-    for (const sub of listing.folders) {
-      if (!isExcluded(sub, excludePrefixes)) {
-        queue.push(sub);
-      }
-    }
-
-    onProgress?.({
-      processed: out.length,
-      total: out.length,
-      currentPath: folder,
-      phase: 'walking',
-    });
-  }
-
+  const all = await adapter.listAllMarkdown();
+  const out = all.filter((p) => p.endsWith('.md') && !isExcluded(p, excludePrefixes));
   out.sort();
+  onProgress?.({
+    processed: out.length,
+    total: out.length,
+    currentPath: '',
+    phase: 'walking',
+  });
   return out;
 }
 

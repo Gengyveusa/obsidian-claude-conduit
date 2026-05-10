@@ -54,6 +54,25 @@ class FakeAdapter implements VaultAdapter {
   list(folder: string): Promise<{ files: string[]; folders: string[] }> {
     return Promise.resolve(this.tree.get(folder) ?? { files: [], folders: [] });
   }
+  listAllMarkdown(): Promise<string[]> {
+    // Union of every `.md` path the test mentioned: tree-listed files
+    // (covers the "exists in vault but stat throws" case) plus
+    // file-map keys (covers tests that only populate `files`).
+    const out = new Set<string>();
+    for (const key of this.files.keys()) {
+      if (key.endsWith('.md')) {
+        out.add(key);
+      }
+    }
+    for (const node of this.tree.values()) {
+      for (const f of node.files) {
+        if (f.endsWith('.md')) {
+          out.add(f);
+        }
+      }
+    }
+    return Promise.resolve([...out]);
+  }
 }
 
 function buildAdapter(spec: {
