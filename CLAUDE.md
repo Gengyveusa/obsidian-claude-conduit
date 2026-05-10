@@ -6,19 +6,20 @@ This file orients a Claude Code session opened against this repo. Substrate ques
 
 - **Name:** Sagittarius — Claude Conduit (`obsidian-claude-conduit`)
 - **What:** Native Obsidian plugin. Chat with your vault, retrieval-grounded.
-- **Status:** v0.1.0 (Phase 2 scaffold). v0.1 = read-only chat. v0.5 = diff-first writes. v1.0 = community release.
+- **Status:** v0.2.3 — Phase 3 (Read Layer) shipped. Chat-mode + 5 vault tools, semantic retrieval via HF Inference Providers, conversation logging, daily budget caps. Phase 4 (Write Layer) = next; v0.5 milestone. v1.0 = community release.
 - **Build pattern:** `pair-via-claude-code` per [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) (ADR-010). Thad decides; Claude implements.
 
 ## Read first (in this order)
 
-1. [`docs/02_SPEC.md`](docs/02_SPEC.md) — v0.1 spec (binding).
-2. [`docs/03_PACKAGE_JSON.md`](docs/03_PACKAGE_JSON.md) — dependency rationale.
-3. [`docs/04_MANIFEST_JSON.md`](docs/04_MANIFEST_JSON.md) — Obsidian manifest fields.
-4. [`docs/05_CONDUIT_AGENT_SKETCH.md`](docs/05_CONDUIT_AGENT_SKETCH.md) — agent class shape.
-5. [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) — ADR-010 (process).
-6. [`docs/embed_interface.md`](docs/embed_interface.md) — embedding contract v1 (shared with corpus-ingest).
-7. [`docs/THAD_MAN.md`](docs/THAD_MAN.md) — vault constitution; loaded into the agent's system prompt at runtime.
-8. [`docs/concierge.md`](docs/concierge.md) — Hangar voice; loaded into the agent's system prompt.
+1. [`docs/2026-05-09-phase-3-close.md`](docs/2026-05-09-phase-3-close.md) — ADR-014, Phase 3 retrospective (read this first if you're returning after a break).
+2. [`docs/02_SPEC.md`](docs/02_SPEC.md) — v0.1 spec (binding).
+3. [`docs/03_PACKAGE_JSON.md`](docs/03_PACKAGE_JSON.md) — dependency rationale.
+4. [`docs/04_MANIFEST_JSON.md`](docs/04_MANIFEST_JSON.md) — Obsidian manifest fields.
+5. [`docs/05_CONDUIT_AGENT_SKETCH.md`](docs/05_CONDUIT_AGENT_SKETCH.md) — agent class shape.
+6. [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) — ADR-010 (process).
+7. [`docs/embed_interface.md`](docs/embed_interface.md) — embedding contract v1 (shared with corpus-ingest).
+8. [`docs/THAD_MAN.md`](docs/THAD_MAN.md) — vault constitution; loaded into the agent's system prompt at runtime.
+9. [`docs/concierge.md`](docs/concierge.md) — Hangar voice; loaded into the agent's system prompt.
 
 ## Decision authority hierarchy
 
@@ -48,9 +49,9 @@ When unsure (per ADR-010 §4):
 | Phase | Output | Status |
 |---|---|---|
 | 1 — Spec | `docs/02_SPEC.md` etc. | done (in vault, mirrored to `docs/`) |
-| 2 — Scaffold | this PR | in progress |
-| 3 — Read layer | side panel, retrieval, tools, budget — **= v0.1 ship** | next |
-| 4 — Write layer | diff-first writes, transaction log, undo | future |
+| 2 — Scaffold | esbuild, manifest, plugin entry | done |
+| 3 — Read layer | side panel, retrieval, tools, budget — **= v0.1 ship (shipped as v0.2.3)** | done |
+| 4 — Write layer | diff-first writes, transaction log, undo | next |
 | 5 — Organization engine | auto-routing, MOC maintenance — **= v0.5** | future |
 | 6 — Activity stream + MCP bridge | events, alerts, digest | future |
 | 7 — Curator | proactive suggestions | future |
