@@ -112,6 +112,17 @@ export type ProposalDiff =
       kind: 'rename-file';
       fromPath: string;
       toPath: string;
+    }
+  | {
+      /**
+       * v0.5.0 — proposal to write a binary file (image, PDF, etc).
+       * The diff card shows path + size; we deliberately don't render
+       * the content (binary doesn't view-cleanly as a unified diff).
+       */
+      kind: 'binary-file';
+      path: string;
+      /** Decoded byte length. Lets the diff card show "image.png · 42.1 KB". */
+      sizeBytes: number;
     };
 
 /**

@@ -36,7 +36,52 @@ export class SagittariusSettingTab extends PluginSettingTab {
     this.renderRetrievalSection(containerEl);
     this.renderBudgetSection(containerEl);
     this.renderLogSection(containerEl);
+    this.renderWriteLayerSection(containerEl);
     this.renderVoyageSection(containerEl);
+  }
+
+  private renderWriteLayerSection(parent: HTMLElement): void {
+    parent.createEl('h3', { text: 'Write layer (Phase 4)' });
+    parent.createEl('p', {
+      cls: 'setting-item-description',
+      text:
+        'Controls how the 9 write tools (`create_note`, `patch_note`, `move_note`, etc.) apply changes. ' +
+        'In review mode every proposal routes through a diff card you have to Confirm. ' +
+        '`auto` is reserved for a future release after Phase 4 has been battle-tested.',
+    });
+
+    new Setting(parent)
+      .setName('Write mode')
+      .setDesc(
+        'review = diff-first, manual approval per tool call. auto = apply immediately (not wired in v0.5; behaves as review).',
+      )
+      .addDropdown((dd) =>
+        dd
+          .addOption('review', 'Review (diff card, manual confirm)')
+          .addOption('auto', 'Auto (disabled in v0.5 — behaves as review)')
+          .setValue(this.plugin.settings.writeMode)
+          .onChange(async (value) => {
+            this.plugin.settings.writeMode =
+              value === 'auto' ? 'auto' : 'review';
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(parent)
+      .setName('Default attachments folder')
+      .setDesc(
+        'Where `file_asset` writes binaries when the agent does not specify a folder. ' +
+          'Vault-relative; defaults to "attachments". Match your Obsidian "Files & Links → Attachment folder path" if you changed it.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('attachments')
+          .setValue(this.plugin.settings.defaultAttachmentsFolder)
+          .onChange(async (value) => {
+            this.plugin.settings.defaultAttachmentsFolder = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
   }
 
   private renderApiSection(parent: HTMLElement): void {

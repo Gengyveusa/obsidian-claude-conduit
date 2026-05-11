@@ -33,6 +33,8 @@ export default [
         crypto: 'readonly',
         TextEncoder: 'readonly',
         TextDecoder: 'readonly',
+        atob: 'readonly',
+        btoa: 'readonly',
       },
     },
     plugins: {

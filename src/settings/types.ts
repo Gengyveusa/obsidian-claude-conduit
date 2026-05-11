@@ -39,6 +39,23 @@ export interface SagittariusSettings {
   sidebarPosition: 'right' | 'left';
   streamingEnabled: boolean;
   showCitations: boolean;
+
+  // Phase 4 write layer (per ADR-016 D2)
+  /**
+   * `'review'` (default): every write tool routes through the diff card —
+   * user must Confirm before any file changes. `'auto'` skips the diff
+   * card and applies writes immediately. Reserved in v0.5.0 but the
+   * `'auto'` code path is not wired yet (per ADR-016 D2: "`auto` ships
+   * after Phase 4 is battle-tested"). Surfacing the setting here lets
+   * us flip the wiring on without a data migration when ready.
+   */
+  writeMode: 'review' | 'auto';
+  /**
+   * Default folder for `file_asset` writes when the LLM doesn't specify
+   * one. Convention: `'attachments'` at the vault root. Override if
+   * your Obsidian "Files & Links → Attachment folder path" differs.
+   */
+  defaultAttachmentsFolder: string;
 }
 
 export const DEFAULT_SETTINGS: SagittariusSettings = {
@@ -64,4 +81,7 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
   sidebarPosition: 'right',
   streamingEnabled: true,
   showCitations: true,
+
+  writeMode: 'review',
+  defaultAttachmentsFolder: 'attachments',
 };

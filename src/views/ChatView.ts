@@ -314,6 +314,17 @@ function headerPathFor(diff: ProposalDiff): string {
   return diff.path;
 }
 
+/** Human-readable byte size for the binary-file diff card. */
+function formatSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
 /**
  * Render a `ProposalDiff` into the diff card body. v0.3.0 supports the two
  * variants used by `create_note` and `append_to_note`; later phases extend.
@@ -330,6 +341,13 @@ function renderProposalDiff(parent: HTMLElement, diff: ProposalDiff): void {
     row.createEl('code', { text: diff.fromPath, cls: 'sagittarius-diff-line-del' });
     row.createSpan({ text: '  →  ' });
     row.createEl('code', { text: diff.toPath, cls: 'sagittarius-diff-line-add' });
+    return;
+  }
+  if (diff.kind === 'binary-file') {
+    // v0.5.0 — no content diff; show path + size.
+    const row = parent.createDiv({ cls: 'sagittarius-diff-binary' });
+    row.createEl('code', { text: `+ ${diff.path}`, cls: 'sagittarius-diff-line-add' });
+    row.createSpan({ text: `  (${formatSize(diff.sizeBytes)})`, cls: 'sagittarius-diff-binary-size' });
     return;
   }
   const pre = parent.createEl('pre', { cls: 'sagittarius-diff-pre' });
