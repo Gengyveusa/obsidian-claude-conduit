@@ -6,7 +6,7 @@ This file orients a Claude Code session opened against this repo. Substrate ques
 
 - **Name:** Sagittarius — Claude Conduit (`obsidian-claude-conduit`)
 - **What:** Native Obsidian plugin. Chat with your vault, retrieval-grounded.
-- **Status:** v0.4.0 — Phase 4 undo command **shipped** (per ADR-016 D5 amendment, pulled forward from v0.5.0). `Sagittarius: Undo last write transaction` replays the most recent transaction's inverse ops with a confirmation modal. Added `adapter.delete()` + `TransactionReplayer` + `JsonTransactionLog.removeLast()`. Next: v0.4.1 graph trio (`move_note`, `rename_note`, `link_notes`). v0.5.0 closes Phase 4 with `file_asset` + `writeMode` setting.
+- **Status:** v0.4.1 — Phase 4 graph trio **shipped**. `move_note` + `rename_note` use `adapter.renameFile()` which wraps `app.fileManager.renameFile()` so Obsidian auto-updates every wikilink across the vault. `link_notes` appends or anchor-inserts a `[[wikilink]]` reference (same propose/apply/conflict pattern as patch_note). New `rename-file` InverseOp variant for undo support. Next: v0.5.0 closes Phase 4 with `file_asset` + `writeMode` setting. v1.0 = community release.
 - **Build pattern:** `pair-via-claude-code` per [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) (ADR-010). Thad decides; Claude implements.
 
 ## Read first (in this order)

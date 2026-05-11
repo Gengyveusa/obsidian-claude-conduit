@@ -59,6 +59,41 @@ export class VaultAdapterImpl implements VaultAdapter {
     return this.inner.remove(path);
   }
 
+  /**
+   * Move or rename a file via `app.fileManager.renameFile()` — Obsidian's
+   * metadata-cache-aware op that rewrites every wikilink across the vault
+   * to point at the new location. Used by v0.4.1's `move_note` and
+   * `rename_note` tools.
+   *
+   * Throws if `oldPath` doesn't resolve to a `TFile` (folders, missing,
+   * or null cases) or if `newPath` already exists.
+   */
+  async renameFile(oldPath: string, newPath: string): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(oldPath);
+    if (file === null) {
+      throw new Error(`VaultAdapterImpl.renameFile: ${oldPath} does not exist.`);
+    }
+    // Duck-type TFile vs TFolder without importing `TFile` at runtime —
+    // obsidian.d.ts ships type definitions only, no JS module to bind
+    // `instanceof` against at test time. `extension` is present on TFile
+    // but not TFolder.
+    if (!('extension' in file)) {
+      throw new Error(
+        `VaultAdapterImpl.renameFile: ${oldPath} is not a file (probably a folder). ` +
+          'Use a different tool to move folders.',
+      );
+    }
+    if (await this.inner.exists(newPath)) {
+      throw new Error(
+        `VaultAdapterImpl.renameFile: refusing to clobber existing ${newPath}.`,
+      );
+    }
+    // Auto-mkdir the parent of newPath so the rename doesn't fail on a
+    // missing folder (mirrors the write() contract from v0.2.6 / ADR-015).
+    await this.ensureParentDir(newPath);
+    await this.app.fileManager.renameFile(file, newPath);
+  }
+
   async stat(path: string): Promise<VaultStat | null> {
     const stat: Stat | null = await this.inner.stat(path);
     if (!stat) {

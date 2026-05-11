@@ -114,5 +114,7 @@ function describeInverse(inv: Transaction['ops'][number]['inverse']): string {
       return `Delete ${inv.path}`;
     case 'write-file':
       return `Restore ${inv.path} to ${inv.content.length} bytes`;
+    case 'rename-file':
+      return `Rename ${inv.from} → ${inv.to}`;
   }
 }

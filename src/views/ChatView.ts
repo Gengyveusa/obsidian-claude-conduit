@@ -83,7 +83,7 @@ export class ChatView extends ItemView {
       header.createEl('strong', { text: proposal.toolName });
       header.createSpan({
         cls: 'sagittarius-diff-path',
-        text: ` · ${proposal.diff.path}`,
+        text: ` · ${headerPathFor(proposal.diff)}`,
       });
 
       const body = card.createDiv({ cls: 'sagittarius-diff-body' });
@@ -304,6 +304,17 @@ function truncate(s: string, max: number): string {
 }
 
 /**
+ * Header-line path for the diff card. Most variants have a single `path`
+ * but `rename-file` carries `fromPath` + `toPath` instead.
+ */
+function headerPathFor(diff: ProposalDiff): string {
+  if (diff.kind === 'rename-file') {
+    return `${diff.fromPath} → ${diff.toPath}`;
+  }
+  return diff.path;
+}
+
+/**
  * Render a `ProposalDiff` into the diff card body. v0.3.0 supports the two
  * variants used by `create_note` and `append_to_note`; later phases extend.
  *
@@ -313,6 +324,14 @@ function truncate(s: string, max: number): string {
  * proper diff renderer.
  */
 function renderProposalDiff(parent: HTMLElement, diff: ProposalDiff): void {
+  if (diff.kind === 'rename-file') {
+    // v0.4.1 — no content diff; just show old → new.
+    const row = parent.createDiv({ cls: 'sagittarius-diff-rename' });
+    row.createEl('code', { text: diff.fromPath, cls: 'sagittarius-diff-line-del' });
+    row.createSpan({ text: '  →  ' });
+    row.createEl('code', { text: diff.toPath, cls: 'sagittarius-diff-line-add' });
+    return;
+  }
   const pre = parent.createEl('pre', { cls: 'sagittarius-diff-pre' });
   if (diff.kind === 'create-file') {
     for (const line of diff.content.split('\n')) {

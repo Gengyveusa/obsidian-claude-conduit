@@ -147,6 +147,17 @@ export async function dispatchInverse(adapter: VaultAdapter, inverse: InverseOp)
       // follow-up if undo proves to cost user data.
       await adapter.write(inverse.path, inverse.content);
       return;
+    case 'rename-file':
+      // v0.4.1 — undo a move/rename. We renameFile() back to the original
+      // path. Obsidian's metadata cache will auto-update wikilinks again.
+      // If `from` is already gone (user manually moved it back, say),
+      // skip silently rather than throwing — same idempotence as
+      // delete-file.
+      if (!(await adapter.exists(inverse.from))) {
+        return;
+      }
+      await adapter.renameFile(inverse.from, inverse.to);
+      return;
     default: {
       // TypeScript exhaustiveness check. Unreachable in well-typed code,
       // but the agent might emit a future InverseOp shape from an older

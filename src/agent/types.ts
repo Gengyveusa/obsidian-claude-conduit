@@ -83,6 +83,19 @@ export interface VaultAdapter {
    * wraps Obsidian's `DataAdapter.remove()`.
    */
   delete(path: string): Promise<void>;
+  /**
+   * Move or rename the file at `oldPath` to `newPath`. Production wraps
+   * `app.fileManager.renameFile()`, which automatically updates
+   * Obsidian's metadata cache and rewrites every wikilink across the
+   * vault to point to the new location. That metadata-cache integration
+   * is the reason this lives on `VaultAdapter` instead of using the
+   * lower-level `DataAdapter` directly.
+   *
+   * Added v0.4.1 for the graph trio (`move_note`, `rename_note`). Throws
+   * if `oldPath` doesn't exist or if `newPath` already exists — callers
+   * should `exists()` first if they want a different semantic.
+   */
+  renameFile(oldPath: string, newPath: string): Promise<void>;
   stat(path: string): Promise<VaultStat | null>;
   list(folderPath: string): Promise<{ files: string[]; folders: string[] }>;
   /**

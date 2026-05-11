@@ -6,7 +6,10 @@ import { ToolRegistry } from './agent/ToolRegistry';
 import { makeAddFrontmatterTool } from './agent/tools/add_frontmatter';
 import { makeAppendToNoteTool } from './agent/tools/append_to_note';
 import { makeCreateNoteTool } from './agent/tools/create_note';
+import { makeLinkNotesTool } from './agent/tools/link_notes';
+import { makeMoveNoteTool } from './agent/tools/move_note';
 import { makePatchNoteTool } from './agent/tools/patch_note';
+import { makeRenameNoteTool } from './agent/tools/rename_note';
 import { makeRewriteSectionTool } from './agent/tools/rewrite_section';
 import { makeGetBacklinksTool } from './agent/tools/get_backlinks';
 import { makeGetGraphNeighborhoodTool } from './agent/tools/get_graph_neighborhood';
@@ -420,6 +423,15 @@ export default class SagittariusPlugin extends Plugin {
     );
     tools.register(
       makeAddFrontmatterTool({ adapter, gate: this.approvalGate, ctx: writeCtx }),
+    );
+    tools.register(
+      makeMoveNoteTool({ adapter, gate: this.approvalGate, ctx: writeCtx }),
+    );
+    tools.register(
+      makeRenameNoteTool({ adapter, gate: this.approvalGate, ctx: writeCtx }),
+    );
+    tools.register(
+      makeLinkNotesTool({ adapter, gate: this.approvalGate, ctx: writeCtx }),
     );
 
     let retrieval: RetrievalLayer | undefined;

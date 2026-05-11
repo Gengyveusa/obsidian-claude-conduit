@@ -43,7 +43,13 @@ export type InverseOp =
   /** Delete `path`. Inverse of `create_note`. */
   | { kind: 'delete-file'; path: string }
   /** Write `content` to `path` (overwriting). Inverse of `append_to_note` (or any other op that modified an existing file's body). */
-  | { kind: 'write-file'; path: string; content: string };
+  | { kind: 'write-file'; path: string; content: string }
+  /**
+   * Move the file currently at `from` to `to`. Inverse of `move_note` and
+   * `rename_note` (added v0.4.1). The runtime calls `adapter.renameFile`,
+   * which auto-updates Obsidian's metadata cache + wikilinks.
+   */
+  | { kind: 'rename-file'; from: string; to: string };
 
 /**
  * Proposed change emitted by a write tool *before* it actually applies.
@@ -95,6 +101,17 @@ export type ProposalDiff =
       before: string;
       /** The content the write will produce, used by the renderer to show + lines. */
       after: string;
+    }
+  | {
+      /**
+       * v0.4.1 — proposal to move/rename a file. The diff card shows the
+       * old → new path; there's no body diff because the file content is
+       * untouched. Obsidian's metadata cache will auto-update every
+       * wikilink across the vault when the rename applies.
+       */
+      kind: 'rename-file';
+      fromPath: string;
+      toPath: string;
     };
 
 /**

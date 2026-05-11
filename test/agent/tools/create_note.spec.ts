@@ -30,6 +30,9 @@ class MemAdapter implements VaultAdapter {
   delete(): Promise<void> {
     throw new Error('unused');
   }
+  renameFile(): Promise<void> {
+    throw new Error("unused");
+  }
   mkdir(path: string): Promise<void> {
     this.mkdirs.push(path);
     return Promise.resolve();
