@@ -51,6 +51,14 @@ export class VaultAdapterImpl implements VaultAdapter {
     }
   }
 
+  /**
+   * Delete a file. Wraps `DataAdapter.remove()`. Used by the v0.4.0
+   * `undo_last_transaction` command to reverse `create_note` proposals.
+   */
+  delete(path: string): Promise<void> {
+    return this.inner.remove(path);
+  }
+
   async stat(path: string): Promise<VaultStat | null> {
     const stat: Stat | null = await this.inner.stat(path);
     if (!stat) {

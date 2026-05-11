@@ -28,6 +28,9 @@ class FakeAdapter implements VaultAdapter {
     this.files.set(path, content);
     return Promise.resolve();
   }
+  delete(_path: string): Promise<void> {
+    return Promise.resolve();
+  }
   mkdir(path: string): Promise<void> {
     this.folders.add(path);
     this.mkdirCalls.push(path);

@@ -32,6 +32,9 @@ class MemAdapter implements VaultAdapter {
   writeBinary(): Promise<void> {
     throw new Error('MemAdapter.writeBinary unused in this suite');
   }
+  delete(): Promise<void> {
+    throw new Error('MemAdapter.delete unused in this suite');
+  }
   mkdir(): Promise<void> {
     return Promise.resolve();
   }
