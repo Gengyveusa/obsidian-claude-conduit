@@ -53,20 +53,42 @@ export interface VaultAdapter {
   read(path: string): Promise<string>;
   /** Read a file as raw bytes — used for sqlite index persistence. */
   readBinary(path: string): Promise<ArrayBuffer>;
-  /** Write (or overwrite) a UTF-8 text file at the given vault-relative path. */
+  /**
+   * Write (or overwrite) a UTF-8 text file at the given vault-relative path.
+   *
+   * The implementation MUST ensure the parent directory exists (v0.2.6
+   * contract per ADR-015). Production `VaultAdapterImpl.write()` derives
+   * the parent dir and calls `mkdir` defensively before delegating.
+   * Phase 4 write tools rely on this so they don't have to remember the
+   * mkdir dance for each new write target.
+   */
   write(path: string, content: string): Promise<void>;
-  /** Write (or overwrite) raw bytes — used for sqlite index persistence. */
+  /**
+   * Write (or overwrite) raw bytes — used for sqlite index persistence.
+   * Same parent-dir auto-create contract as `write()`.
+   */
   writeBinary(path: string, content: ArrayBuffer): Promise<void>;
-  /** Create the folder if it doesn't exist. No-op if it does. */
+  /**
+   * Create the folder if it doesn't exist. No-op if it does. Per ADR-015,
+   * Obsidian's `DataAdapter.mkdir` is recursive — calling `mkdir('a/b/c')`
+   * creates all intermediate dirs in one call.
+   */
   mkdir(path: string): Promise<void>;
   stat(path: string): Promise<VaultStat | null>;
   list(folderPath: string): Promise<{ files: string[]; folders: string[] }>;
   /**
    * Return every `.md` file in the vault as a flat list of vault-relative
-   * paths. Production wraps `app.vault.getMarkdownFiles()`; tests can
-   * derive from a map. Used by the Indexer instead of recursing through
-   * `list()` because Obsidian's DataAdapter behavior on the empty/root
-   * folder has been unreliable across versions (v0.2.3 walker fix).
+   * paths. Production wraps `app.vault.getMarkdownFiles()` per ADR-015's
+   * audit; tests can derive from a map. Used by the Indexer instead of
+   * recursing through `list()`.
+   *
+   * Note (ADR-015 correction): we originally adopted this in v0.2.3
+   * because we believed `list('')` was throwing in production. A live
+   * audit later disproved that hypothesis — both `list('')` and `list('/')`
+   * actually work fine. The true root cause of the v0.2.0-v0.2.2 walker
+   * failure was never proven. `getMarkdownFiles()` is still the right
+   * choice on architectural merit (canonical Obsidian API, no recursion,
+   * no edge cases).
    */
   listAllMarkdown(): Promise<string[]>;
 }
