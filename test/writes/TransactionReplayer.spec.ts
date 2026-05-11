@@ -44,6 +44,18 @@ class MemAdapter implements VaultAdapter {
     this.files.delete(path);
     return Promise.resolve();
   }
+  renameFile(oldPath: string, newPath: string): Promise<void> {
+    const f = this.files.get(oldPath);
+    if (f === undefined) {
+      return Promise.reject(new Error(`ENOENT: ${oldPath}`));
+    }
+    if (this.files.has(newPath)) {
+      return Promise.reject(new Error(`EEXIST: ${newPath}`));
+    }
+    this.files.delete(oldPath);
+    this.files.set(newPath, f);
+    return Promise.resolve();
+  }
   readBinary(): Promise<ArrayBuffer> {
     throw new Error('unused');
   }
@@ -112,6 +124,25 @@ describe('dispatchInverse', () => {
     const adapter = new MemAdapter();
     await dispatchInverse(adapter, { kind: 'write-file', path: 'recreate.md', content: 'data' });
     expect(adapter.files.get('recreate.md')?.content).toBe('data');
+  });
+
+  it("renames a file for 'rename-file' inverse (undoes move/rename)", async () => {
+    const adapter = new MemAdapter();
+    adapter.files.set('new-location.md', { content: 'data', mtime: 5 });
+    await dispatchInverse(adapter, {
+      kind: 'rename-file',
+      from: 'new-location.md',
+      to: 'original-location.md',
+    });
+    expect(adapter.files.has('new-location.md')).toBe(false);
+    expect(adapter.files.get('original-location.md')?.content).toBe('data');
+  });
+
+  it("treats missing source as success for 'rename-file' (idempotent)", async () => {
+    const adapter = new MemAdapter();
+    await expect(
+      dispatchInverse(adapter, { kind: 'rename-file', from: 'gone.md', to: 'wherever.md' }),
+    ).resolves.toBeUndefined();
   });
 });
 
