@@ -6,6 +6,7 @@ import { ToolRegistry } from './agent/ToolRegistry';
 import { makeAddFrontmatterTool } from './agent/tools/add_frontmatter';
 import { makeAppendToNoteTool } from './agent/tools/append_to_note';
 import { makeCreateNoteTool } from './agent/tools/create_note';
+import { makeFileAssetTool } from './agent/tools/file_asset';
 import { makeLinkNotesTool } from './agent/tools/link_notes';
 import { makeMoveNoteTool } from './agent/tools/move_note';
 import { makePatchNoteTool } from './agent/tools/patch_note';
@@ -432,6 +433,14 @@ export default class SagittariusPlugin extends Plugin {
     );
     tools.register(
       makeLinkNotesTool({ adapter, gate: this.approvalGate, ctx: writeCtx }),
+    );
+    tools.register(
+      makeFileAssetTool({
+        adapter,
+        gate: this.approvalGate,
+        ctx: writeCtx,
+        defaultFolder: this.settings.defaultAttachmentsFolder,
+      }),
     );
 
     let retrieval: RetrievalLayer | undefined;
