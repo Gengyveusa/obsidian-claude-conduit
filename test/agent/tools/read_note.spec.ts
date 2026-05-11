@@ -73,6 +73,9 @@ describe('read_note', () => {
     expect(out?.body).toBe('This is the body.\n\nSecond paragraph.');
     expect(out?.mtime).toBe(1715000000.5);
     expect(out?.size_bytes).toBe(60);
+    // v0.3.x: hash is the SHA-256 of the raw on-disk content (frontmatter + body).
+    // Phase 4 write tools use it as `expectedHash` for ConflictDetector.
+    expect(out?.hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it('returns null when the note does not exist', async () => {

@@ -320,13 +320,88 @@ function renderProposalDiff(parent: HTMLElement, diff: ProposalDiff): void {
     }
     return;
   }
-  // append-to-file: show last lines of existing tail as context, then new lines as +
-  if (diff.existingTail.length > 0) {
-    for (const line of diff.existingTail.split('\n')) {
-      pre.createDiv({ cls: 'sagittarius-diff-line-ctx', text: `  ${line}` });
+  if (diff.kind === 'append-to-file') {
+    // append: show last lines of existing tail as context, then new lines as +
+    if (diff.existingTail.length > 0) {
+      for (const line of diff.existingTail.split('\n')) {
+        pre.createDiv({ cls: 'sagittarius-diff-line-ctx', text: `  ${line}` });
+      }
+    }
+    for (const line of diff.appendedContent.split('\n')) {
+      pre.createDiv({ cls: 'sagittarius-diff-line-add', text: `+ ${line}` });
+    }
+    return;
+  }
+  // patch-file: render a per-line diff between before and after. Naive LCS
+  // is good enough for v0.3.x — the tool already validated the patch
+  // before getting here, so what we render is the literal new-vs-old view.
+  renderLineDiff(pre, diff.before, diff.after);
+}
+
+/**
+ * Render a naive line-by-line diff: every line either unchanged (ctx), deleted (-),
+ * or added (+). Uses a Myers-style longest-common-subsequence walk. Good enough
+ * for the v0.3.x patch_note view; can be swapped for a smarter renderer later.
+ */
+function renderLineDiff(parent: HTMLElement, beforeText: string, afterText: string): void {
+  const before = beforeText.split('\n');
+  const after = afterText.split('\n');
+  const lcsTable = computeLcsTable(before, after);
+  const ops = walkLcs(before, after, lcsTable);
+  for (const op of ops) {
+    const cls =
+      op.kind === 'add'
+        ? 'sagittarius-diff-line-add'
+        : op.kind === 'del'
+          ? 'sagittarius-diff-line-del'
+          : 'sagittarius-diff-line-ctx';
+    const marker = op.kind === 'add' ? '+ ' : op.kind === 'del' ? '- ' : '  ';
+    parent.createDiv({ cls, text: marker + op.line });
+  }
+}
+
+interface DiffOp {
+  kind: 'add' | 'del' | 'ctx';
+  line: string;
+}
+
+/** O(n*m) LCS DP table. n,m small (file lines), so this is fine. */
+function computeLcsTable(a: string[], b: string[]): number[][] {
+  const n = a.length;
+  const m = b.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = 1; i <= n; i++) {
+    for (let j = 1; j <= m; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
     }
   }
-  for (const line of diff.appendedContent.split('\n')) {
-    pre.createDiv({ cls: 'sagittarius-diff-line-add', text: `+ ${line}` });
+  return dp;
+}
+
+function walkLcs(a: string[], b: string[], dp: number[][]): DiffOp[] {
+  const ops: DiffOp[] = [];
+  let i = a.length;
+  let j = b.length;
+  while (i > 0 && j > 0) {
+    if (a[i - 1] === b[j - 1]) {
+      ops.unshift({ kind: 'ctx', line: a[i - 1] });
+      i--;
+      j--;
+    } else if (dp[i - 1][j] >= dp[i][j - 1]) {
+      ops.unshift({ kind: 'del', line: a[i - 1] });
+      i--;
+    } else {
+      ops.unshift({ kind: 'add', line: b[j - 1] });
+      j--;
+    }
   }
+  while (i > 0) {
+    ops.unshift({ kind: 'del', line: a[i - 1] });
+    i--;
+  }
+  while (j > 0) {
+    ops.unshift({ kind: 'add', line: b[j - 1] });
+    j--;
+  }
+  return ops;
 }

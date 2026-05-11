@@ -71,8 +71,8 @@ export interface Proposal {
 }
 
 /**
- * What a proposal will do, in renderer-ready form. v0.3.0 ships two
- * variants matched to the first two write tools; later PRs extend.
+ * What a proposal will do, in renderer-ready form. v0.3.x ships three
+ * variants matched to the write tools registered so far; later PRs extend.
  */
 export type ProposalDiff =
   | {
@@ -87,7 +87,38 @@ export type ProposalDiff =
       existingTail: string;
       /** Lines being appended. */
       appendedContent: string;
+    }
+  | {
+      kind: 'patch-file';
+      path: string;
+      /** The prior content, used by the renderer to show context lines. */
+      before: string;
+      /** The content the write will produce, used by the renderer to show + lines. */
+      after: string;
     };
+
+/**
+ * One forward operation in a `patch_note` proposal. Line numbers are
+ * **1-indexed**, inclusive on both ends — matches how users see lines in
+ * editors and error messages. Internally `applyPatchOps` converts to
+ * 0-indexed array work.
+ *
+ * Multi-op semantics: all ops describe positions in the *original* file.
+ * `applyPatchOps` sorts by `startLine` (or `afterLine`) descending and
+ * applies in reverse, so earlier-positioned ops aren't shifted by
+ * later-positioned ones. Overlapping ranges are rejected at input
+ * validation.
+ */
+export type PatchOp =
+  /** Replace the inclusive range [startLine..endLine] with `content`. */
+  | { kind: 'replace'; startLine: number; endLine: number; content: string }
+  /**
+   * Insert `content` after the given line. `afterLine: 0` inserts at the
+   * very top of the file (before line 1).
+   */
+  | { kind: 'insert'; afterLine: number; content: string }
+  /** Delete the inclusive range [startLine..endLine]. */
+  | { kind: 'delete'; startLine: number; endLine: number };
 
 /**
  * The user's response to a proposal. Returned by the `ApprovalGate`.
