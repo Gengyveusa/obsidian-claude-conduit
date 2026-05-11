@@ -30,6 +30,9 @@ export default [
         Headers: 'readonly',
         Request: 'readonly',
         URL: 'readonly',
+        crypto: 'readonly',
+        TextEncoder: 'readonly',
+        TextDecoder: 'readonly',
       },
     },
     plugins: {
