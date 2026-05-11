@@ -1,7 +1,7 @@
 {
   "id": "obsidian-claude-conduit",
   "name": "Sagittarius — Claude Conduit",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "minAppVersion": "1.4.0",
   "description": "Native Obsidian plugin for Claude. Chat with your vault, retrieval-grounded, every answer cites. Diff-first writes coming v0.5.",
   "author": "GengyveUSA",

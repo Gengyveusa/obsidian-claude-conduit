@@ -35,6 +35,10 @@ class FakeVaultAdapter implements VaultAdapter {
     return Promise.resolve();
   }
 
+  delete(_path: string): Promise<void> {
+    return Promise.resolve();
+  }
+
   mkdir(_path: string): Promise<void> {
     return Promise.resolve();
   }

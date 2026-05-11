@@ -50,6 +50,9 @@ class FakeAdapter implements VaultAdapter {
     this.binaryFiles.set(path, content);
     return Promise.resolve();
   }
+  delete(_path: string): Promise<void> {
+    return Promise.resolve();
+  }
   mkdir(path: string): Promise<void> {
     this.mkdirCalls.push(path);
     return Promise.resolve();

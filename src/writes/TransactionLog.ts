@@ -22,6 +22,13 @@ import type { AppliedOp, Transaction } from './types';
 export interface TransactionLog {
   begin(sessionId?: string): TransactionBuilder;
   recent(limit?: number): Promise<Transaction[]>;
+  /**
+   * Pop the most-recent transaction off the log and persist the result.
+   * Returns the removed transaction, or null if the log was already empty.
+   * Used by the v0.4.0 `undo_last_transaction` command after a successful
+   * inverse-op replay.
+   */
+  removeLast(): Promise<Transaction | null>;
 }
 
 export interface TransactionBuilder {
@@ -103,6 +110,24 @@ export class JsonTransactionLog implements TransactionLog {
       return all;
     }
     return all.slice(-limit);
+  }
+
+  async removeLast(): Promise<Transaction | null> {
+    const all = await this.loadAll();
+    if (all.length === 0) {
+      return null;
+    }
+    const removed = all[all.length - 1];
+    const remaining = all.slice(0, -1);
+    if (remaining.length === 0) {
+      // Persist an empty array rather than deleting the file — keeps the
+      // contract simple ("the file is always JSON if it exists") and avoids
+      // a needless adapter.delete dance here.
+      await this.adapter.write(this.path, '[]');
+    } else {
+      await this.adapter.write(this.path, JSON.stringify(remaining, null, 2));
+    }
+    return removed;
   }
 
   private async appendAndPersist(tx: Transaction): Promise<void> {

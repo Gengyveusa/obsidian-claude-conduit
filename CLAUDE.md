@@ -6,7 +6,7 @@ This file orients a Claude Code session opened against this repo. Substrate ques
 
 - **Name:** Sagittarius — Claude Conduit (`obsidian-claude-conduit`)
 - **What:** Native Obsidian plugin. Chat with your vault, retrieval-grounded.
-- **Status:** v0.3.1 — Phase 4 (Write Layer) read-modify-write trio **shipped**. v0.3.0 landed `create_note` + `append_to_note` + diff-first approval + per-turn transaction log. v0.3.1 adds the read-modify-write trio: `patch_note` (structured ops), `rewrite_section` (header-bounded body replace), `add_frontmatter` (YAML field upsert), plus `ConflictDetector` (mtime + SHA-256, ADR-016 P2). Next: v0.4.x graph trio (`move_note`, `rename_note`, `link_notes`). v0.5.0 closes Phase 4 with `file_asset` + undo command. v1.0 = community release.
+- **Status:** v0.4.0 — Phase 4 undo command **shipped** (per ADR-016 D5 amendment, pulled forward from v0.5.0). `Sagittarius: Undo last write transaction` replays the most recent transaction's inverse ops with a confirmation modal. Added `adapter.delete()` + `TransactionReplayer` + `JsonTransactionLog.removeLast()`. Next: v0.4.1 graph trio (`move_note`, `rename_note`, `link_notes`). v0.5.0 closes Phase 4 with `file_asset` + `writeMode` setting.
 - **Build pattern:** `pair-via-claude-code` per [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) (ADR-010). Thad decides; Claude implements.
 
 ## Read first (in this order)

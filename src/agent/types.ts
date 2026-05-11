@@ -74,6 +74,15 @@ export interface VaultAdapter {
    * creates all intermediate dirs in one call.
    */
   mkdir(path: string): Promise<void>;
+  /**
+   * Delete the file at `path`. Throws if the file doesn't exist (callers
+   * who want a no-op-on-missing semantic should `exists()` first).
+   *
+   * Added v0.4.0 for the `undo_last_transaction` command — it needs to
+   * reverse `create_note` proposals by deleting the file. Production
+   * wraps Obsidian's `DataAdapter.remove()`.
+   */
+  delete(path: string): Promise<void>;
   stat(path: string): Promise<VaultStat | null>;
   list(folderPath: string): Promise<{ files: string[]; folders: string[] }>;
   /**

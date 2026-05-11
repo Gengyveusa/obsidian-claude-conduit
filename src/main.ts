@@ -33,8 +33,10 @@ import { SagittariusSettingTab } from './settings/SagittariusSettingTab';
 import { DEFAULT_SETTINGS, type SagittariusSettings } from './settings/types';
 import { ChatView, CHAT_VIEW_TYPE } from './views/ChatView';
 import { QuickQuestionModal } from './views/QuickQuestionModal';
+import { UndoConfirmModal } from './views/UndoConfirmModal';
 import { CallbackApprovalGate } from './writes/CallbackApprovalGate';
 import { JsonTransactionLog } from './writes/TransactionLog';
+import { TransactionReplayer } from './writes/TransactionReplayer';
 import { WriteToolContext } from './writes/WriteToolContext';
 
 const PLUGIN_NAME = 'Sagittarius — Claude Conduit';
@@ -112,6 +114,14 @@ export default class SagittariusPlugin extends Plugin {
       name: 'Rebuild retrieval index from scratch',
       callback: () => {
         void this.runBuild({ rebuild: true });
+      },
+    });
+
+    this.addCommand({
+      id: 'undo-last-write',
+      name: 'Undo last write transaction',
+      callback: () => {
+        void this.runUndoLastWrite();
       },
     });
 
@@ -254,6 +264,25 @@ export default class SagittariusPlugin extends Plugin {
    * console.warn line. Built to make v0.2.x-class production-only bugs
    * surface in seconds.
    */
+  /**
+   * v0.4.0 undo command. Lazy-constructs the txLog + replayer so the
+   * command works even before the agent has been built (e.g. user
+   * hasn't opened chat yet but wants to roll back yesterday's writes).
+   */
+  private async runUndoLastWrite(): Promise<void> {
+    const adapter = new VaultAdapterImpl(this.app);
+    const txLog = new JsonTransactionLog({ adapter, path: TX_LOG_PATH });
+    const replayer = new TransactionReplayer({ adapter, log: txLog });
+
+    const preview = await replayer.peekLast();
+    if (preview === null) {
+      new Notice('Sagittarius: nothing to undo (transaction log is empty).');
+      return;
+    }
+
+    new UndoConfirmModal(this.app, preview, replayer).open();
+  }
+
   private async runSystemCheck(): Promise<void> {
     new Notice('Sagittarius: running system check…');
     let anthropic: MessagesAPI | null = null;

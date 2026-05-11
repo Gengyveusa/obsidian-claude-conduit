@@ -29,6 +29,9 @@ class StubAdapter implements VaultAdapter {
   writeBinary(): Promise<void> {
     return Promise.resolve();
   }
+  delete(): Promise<void> {
+    return Promise.resolve();
+  }
   mkdir(): Promise<void> {
     return Promise.resolve();
   }
