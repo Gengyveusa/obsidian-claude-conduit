@@ -9,11 +9,13 @@ import { chunk, DEFAULT_CHUNKER_OPTIONS, type ChunkerOptions } from './Chunker';
 /**
  * mtime tolerance (seconds) for "unchanged" detection — matches contract §4.
  *
- * Note (v0.2.3): file enumeration moved from a recursive `adapter.list()`
- * walker to `adapter.listAllMarkdown()`. Empirically `app.vault.adapter.list('')`
- * threw silently in production Obsidian, so the walker terminated with 0
- * files. The new path uses Obsidian's `app.vault.getMarkdownFiles()` which
- * is the canonical enumeration API.
+ * Note (v0.2.3 / ADR-015 correction): file enumeration moved from a
+ * recursive `adapter.list()` walker to `adapter.listAllMarkdown()`. v0.2.3
+ * shipped this on the hypothesis that `list('')` was throwing in production
+ * — a later live audit disproved that. The true root cause of the
+ * v0.2.0-v0.2.2 "0 notes" failure was never proven. `getMarkdownFiles()`
+ * is kept on architectural merit (canonical Obsidian API, no recursion,
+ * no edge cases) rather than as a confirmed fix.
  */
 const MTIME_TOLERANCE = 1.0;
 

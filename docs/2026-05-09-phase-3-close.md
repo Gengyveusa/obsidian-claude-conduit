@@ -63,7 +63,7 @@ One-line constant change.
 
 ### v0.2.3 — vault walker
 
-CORS + URL both fixed, indexer reported `0 notes / 0 chunks` even on scratch rebuild. Diagnosis confirmed in console: `app.vault.getMarkdownFiles().length` returned `357`; the indexer found `0`. Root cause: `Indexer.collectFiles()` recursively walked via `adapter.list()`, calling `list('')` on the vault root. In production Obsidian that throws; the silent `try/catch` around it continued the loop, queue emptied, walker returned `[]`. Three releases shipped past this bug because the test FakeAdapters faithfully implemented `list()` with a populated `tree` map — the production failure path was never exercised.
+CORS + URL both fixed, indexer reported `0 notes / 0 chunks` even on scratch rebuild. Diagnosis confirmed in console: `app.vault.getMarkdownFiles().length` returned `357`; the indexer found `0`. At the time we attributed the walker failure to `adapter.list('')` throwing inside the silent `try/catch` around the recursive call. **Per ADR-015, that diagnosis was wrong.** A later live audit found `list('')` and `list('/')` both work fine in production Obsidian — neither throws nor returns empty. The true cause of v0.2.0-v0.2.2's empty walker remains unknown. The v0.2.3 fix landed for the right architectural reason (canonical Obsidian API, no recursion, no edge cases) but for the wrong diagnostic reason. We caught this in audit, not in production, because the fix had already eliminated the failure path.
 
 Fix: drop the recursive walker entirely. Use Obsidian's canonical `app.vault.getMarkdownFiles()` for enumeration. New `listAllMarkdown()` method on the `VaultAdapter` interface keeps the abstraction testable.
 

@@ -7,6 +7,12 @@ import type { VaultAdapter, VaultStat } from '../agent/types';
  * Obsidian DataAdapter surface onto our internal shim so the rest of the
  * code is testable without an Obsidian dependency.
  *
+ * v0.2.6: `write()` and `writeBinary()` auto-mkdir the parent dir before
+ * delegating. Obsidian's raw `DataAdapter.write()` throws `ENOENT` if any
+ * intermediate folder is missing, so prior to v0.2.6 every caller had to
+ * remember to `mkdir(parent)` first — a footgun for Phase 4's 9 write
+ * tools. See ADR-015.
+ *
  * @example
  *   const adapter: VaultAdapter = new VaultAdapterImpl(this.app);
  */
@@ -29,12 +35,14 @@ export class VaultAdapterImpl implements VaultAdapter {
     return this.inner.readBinary(path);
   }
 
-  write(path: string, content: string): Promise<void> {
-    return this.inner.write(path, content);
+  async write(path: string, content: string): Promise<void> {
+    await this.ensureParentDir(path);
+    await this.inner.write(path, content);
   }
 
-  writeBinary(path: string, content: ArrayBuffer): Promise<void> {
-    return this.inner.writeBinary(path, content);
+  async writeBinary(path: string, content: ArrayBuffer): Promise<void> {
+    await this.ensureParentDir(path);
+    await this.inner.writeBinary(path, content);
   }
 
   async mkdir(path: string): Promise<void> {
@@ -61,5 +69,21 @@ export class VaultAdapterImpl implements VaultAdapter {
 
   listAllMarkdown(): Promise<string[]> {
     return Promise.resolve(this.app.vault.getMarkdownFiles().map((f) => f.path));
+  }
+
+  /**
+   * Derive the parent dir of a vault-relative path and ensure it exists.
+   * Obsidian's `DataAdapter.mkdir` is recursive (verified per ADR-015), so
+   * one call covers any depth. Skips when the path is at root.
+   */
+  private async ensureParentDir(path: string): Promise<void> {
+    const lastSlash = path.lastIndexOf('/');
+    if (lastSlash <= 0) {
+      return;
+    }
+    const parent = path.slice(0, lastSlash);
+    if (!(await this.inner.exists(parent))) {
+      await this.inner.mkdir(parent);
+    }
   }
 }
