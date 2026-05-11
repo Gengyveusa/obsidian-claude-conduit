@@ -3,9 +3,11 @@ import { Notice, Plugin, requestUrl } from 'obsidian';
 
 import { ConduitAgent } from './agent/ConduitAgent';
 import { ToolRegistry } from './agent/ToolRegistry';
+import { makeAddFrontmatterTool } from './agent/tools/add_frontmatter';
 import { makeAppendToNoteTool } from './agent/tools/append_to_note';
 import { makeCreateNoteTool } from './agent/tools/create_note';
 import { makePatchNoteTool } from './agent/tools/patch_note';
+import { makeRewriteSectionTool } from './agent/tools/rewrite_section';
 import { makeGetBacklinksTool } from './agent/tools/get_backlinks';
 import { makeGetGraphNeighborhoodTool } from './agent/tools/get_graph_neighborhood';
 import { makeListFolderTool } from './agent/tools/list_folder';
@@ -383,6 +385,12 @@ export default class SagittariusPlugin extends Plugin {
     );
     tools.register(
       makePatchNoteTool({ adapter, gate: this.approvalGate, ctx: writeCtx }),
+    );
+    tools.register(
+      makeRewriteSectionTool({ adapter, gate: this.approvalGate, ctx: writeCtx }),
+    );
+    tools.register(
+      makeAddFrontmatterTool({ adapter, gate: this.approvalGate, ctx: writeCtx }),
     );
 
     let retrieval: RetrievalLayer | undefined;
