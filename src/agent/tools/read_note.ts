@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { sha256Hex } from '../../writes/ConflictDetector';
 import { splitFrontmatter } from '../../util/frontmatter';
 import type { ToolDefinition, VaultAdapter } from '../types';
 
@@ -20,6 +21,14 @@ export interface ReadNoteResult {
   /** POSIX epoch seconds (float). */
   mtime: number;
   size_bytes: number;
+  /**
+   * Lowercase hex SHA-256 of the file's raw UTF-8 content (frontmatter +
+   * body, i.e. what was actually on disk). Phase 4 write tools that
+   * modify this note expect the LLM to pass it back as `expectedHash`
+   * so `ConflictDetector` can refuse to apply against a stale snapshot.
+   * Added in v0.3.x with `patch_note`.
+   */
+  hash: string;
 }
 
 /**
@@ -67,12 +76,14 @@ export function makeReadNoteTool(
       }
 
       const { frontmatter, body } = splitFrontmatter(raw);
+      const hash = await sha256Hex(raw);
       return {
         path,
         frontmatter,
         body,
         mtime: stat.mtime,
         size_bytes: stat.size,
+        hash,
       };
     },
   };

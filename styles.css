@@ -229,3 +229,7 @@
 .sagittarius-diff-rejected {
   opacity: 0.7;
 }
+
+.sagittarius-diff-line-del {
+  color: var(--text-error, #d9534f);
+}
