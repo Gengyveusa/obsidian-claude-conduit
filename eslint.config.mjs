@@ -23,6 +23,13 @@ export default [
         clearTimeout: 'readonly',
         setInterval: 'readonly',
         clearInterval: 'readonly',
+        // Web platform globals — available in Electron renderer + Node 18+
+        // (needed by the requestUrl→fetch adapter and SDK error handling).
+        fetch: 'readonly',
+        Response: 'readonly',
+        Headers: 'readonly',
+        Request: 'readonly',
+        URL: 'readonly',
       },
     },
     plugins: {

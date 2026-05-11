@@ -6,7 +6,7 @@ This file orients a Claude Code session opened against this repo. Substrate ques
 
 - **Name:** Sagittarius — Claude Conduit (`obsidian-claude-conduit`)
 - **What:** Native Obsidian plugin. Chat with your vault, retrieval-grounded.
-- **Status:** v0.2.3 — Phase 3 (Read Layer) shipped. Chat-mode + 5 vault tools, semantic retrieval via HF Inference Providers, conversation logging, daily budget caps. Phase 4 (Write Layer) = next; v0.5 milestone. v1.0 = community release.
+- **Status:** v0.2.5 — Phase 3 (Read Layer) shipped + cleanup pass underway. v0.2.4 added `Sagittarius: System check` command; v0.2.5 bundled `@huggingface/inference` SDK (ADR-013 postscript #3). Phase 4 (Write Layer) = next; v0.5 milestone. v1.0 = community release.
 - **Build pattern:** `pair-via-claude-code` per [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) (ADR-010). Thad decides; Claude implements.
 
 ## Read first (in this order)

@@ -125,6 +125,31 @@ Request body (`{"inputs": [...]}`) and response (`number[][]`) are unchanged, so
 
 **Lesson:** when bypassing an SDK to call a hosted API directly, the URL is part of the contract — and HF, like every other model gateway, evolves theirs. The `embed_interface.md` contract should reference the SDK convention or a stable proxy, not a hardcoded vendor URL. Filing a follow-up to either (a) bundle `@huggingface/inference` so URL evolution is the SDK's problem, or (b) version-pin the endpoint pattern in the contract doc.
 
+## Postscript #3 — 2026-05-10, v0.2.5 patch (Phase 3 cleanup)
+
+Postscript #2 flagged option (a) — bundle the SDK so URL evolution is the SDK's problem. v0.2.5 does exactly that.
+
+**What changed:**
+- Added `@huggingface/inference@^4.13` as a dep. Bundle grew 1.28 → 1.63 MB (+360 KB).
+- Rewrote `HfInferenceFactory` to wrap `InferenceClient.featureExtraction({ model, inputs, provider: 'hf-inference' })` instead of POSTing to a hardcoded URL.
+- Added `makeObsidianRequestUrlNativeFetch()` adapter alongside the existing `makeObsidianRequestUrlFetch()`. New variant returns true `Response` objects (needed by the SDK; the old `FetchLike` shape is kept for legacy callers).
+- Dropped the now-dead code: `HF_ENDPOINT` constant, `MAX_COLD_START_WAIT_MS`, `callWithColdStartRetry`, the `FetchLike` retry plumbing in `HfInferenceFactory`. The SDK owns retry behavior now.
+- Test surface flipped from "mock fetch with raw HTTP responses" to "mock `InferenceClient.featureExtraction` with the typed return shape." Cleaner intent — tests no longer encode wire-format assumptions that drift.
+- Dropped `@xenova/transformers` from package.json. It was deadweight in node_modules; ADR-012's deferral removed it from the bundle in v0.1.x, but the dep entry lingered.
+
+**What didn't change:**
+- The CORS routing through `requestUrl()`. Still required — the SDK uses `fetch` by default which would hit the same `app://obsidian.md` preflight wall we fixed in v0.2.1. We inject the requestUrl-backed adapter via the SDK's `options.fetch` hook.
+- The embedding contract output (384-d Float32Array per input). The SDK's typed return is `(number | number[] | number[][])[]`; our `normalizeVectors` helper unflattens to `number[][]` regardless of which shape the provider returned for the input count.
+
+**What this insulates us from going forward:**
+- HF retiring more endpoints (already happened twice — see postscript #1 and #2).
+- HF adding new auth requirements, rate-limit headers, or response shapes.
+- Provider routing changes within the "Inference Providers" architecture.
+
+**What it doesn't insulate us from:**
+- HF deprecating the `feature-extraction` task itself, or `sentence-transformers/all-MiniLM-L6-v2` going dark. These are model-/task-level concerns the embedding contract pins.
+- SDK breaking changes between major versions. Mitigation: lock to `^4.x` and audit any major-version bump in an ADR.
+
 ## Related
 
 - [ADR-007](2026-05-04-sagittarius-q1-q3-signoff.md) — original hybrid embedding decision; (1) is one of the two paths it sketched.
