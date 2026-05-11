@@ -23,6 +23,7 @@ import type {
   ConversationSession,
   ConversationTurn,
 } from '../../src/log/ConversationLogger';
+import type { WriteToolContext } from '../../src/writes/WriteToolContext';
 
 // ─── Test doubles ──────────────────────────────────────────────────────────
 
@@ -130,6 +131,28 @@ class FakeLogger implements Pick<ConversationLogger, 'startSession'> {
   }
 }
 
+/**
+ * Minimal WriteToolContext stub. ConduitAgent calls begin() then end()
+ * (or abandon() on throw); we just need those methods to exist as no-ops
+ * for tests that don't exercise write tools.
+ */
+function makeNoopCtx(): WriteToolContext {
+  const stub = {
+    begin: () => {
+      /* no-op */
+    },
+    record: () => {
+      throw new Error('FakeCtx.record: no write tools should run in these tests');
+    },
+    end: () => Promise.resolve(null),
+    abandon: () => {
+      /* no-op */
+    },
+    isOpen: () => false,
+  };
+  return stub as unknown as WriteToolContext;
+}
+
 function makeDeps(overrides: Partial<ConduitAgentDeps> = {}): {
   deps: ConduitAgentDeps;
   budget: FakeBudget;
@@ -145,6 +168,7 @@ function makeDeps(overrides: Partial<ConduitAgentDeps> = {}): {
     budget: budget as unknown as BudgetTracker,
     logger: logger as unknown as ConversationLogger,
     systemPromptParts: { constitution: 'CONSTITUTION', hangarVoice: 'HANGAR' },
+    ctx: makeNoopCtx(),
     ...overrides,
   };
   return { deps, budget, logger, tools };

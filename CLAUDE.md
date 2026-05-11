@@ -6,21 +6,22 @@ This file orients a Claude Code session opened against this repo. Substrate ques
 
 - **Name:** Sagittarius — Claude Conduit (`obsidian-claude-conduit`)
 - **What:** Native Obsidian plugin. Chat with your vault, retrieval-grounded.
-- **Status:** v0.2.6 — Phase 3 (Read Layer) shipped + cleanup pass **complete**. v0.2.4 added `Sagittarius: System check`; v0.2.5 bundled `@huggingface/inference` SDK (ADR-013 postscript #3); v0.2.6 audited `VaultAdapter` (ADR-015) and made `write()` auto-mkdir parent dirs in prep for Phase 4. Phase 4 (Write Layer) = next; v0.5 milestone. v1.0 = community release.
+- **Status:** v0.3.0 — Phase 4 (Write Layer) foundation **shipped**. v0.2.6 closed Phase 3 cleanup; v0.3.0 lands the first two write tools (`create_note`, `append_to_note`) with diff-first approval, per-turn transaction log, and ADR-016's full plumbing. Next: v0.3.x adds the read-modify-write trio (`patch_note`, `rewrite_section`, `add_frontmatter`) with conflict detection. v0.5 milestone. v1.0 = community release.
 - **Build pattern:** `pair-via-claude-code` per [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) (ADR-010). Thad decides; Claude implements.
 
 ## Read first (in this order)
 
-1. [`docs/2026-05-09-phase-3-close.md`](docs/2026-05-09-phase-3-close.md) — ADR-014, Phase 3 retrospective (read this first if you're returning after a break).
-2. [`docs/2026-05-10-adr-015-vault-adapter-audit.md`](docs/2026-05-10-adr-015-vault-adapter-audit.md) — ADR-015, VaultAdapter audit findings + Phase 4 prereqs.
-3. [`docs/02_SPEC.md`](docs/02_SPEC.md) — v0.1 spec (binding).
-4. [`docs/03_PACKAGE_JSON.md`](docs/03_PACKAGE_JSON.md) — dependency rationale.
-5. [`docs/04_MANIFEST_JSON.md`](docs/04_MANIFEST_JSON.md) — Obsidian manifest fields.
-6. [`docs/05_CONDUIT_AGENT_SKETCH.md`](docs/05_CONDUIT_AGENT_SKETCH.md) — agent class shape.
-7. [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) — ADR-010 (process).
-8. [`docs/embed_interface.md`](docs/embed_interface.md) — embedding contract v1 (shared with corpus-ingest).
-9. [`docs/THAD_MAN.md`](docs/THAD_MAN.md) — vault constitution; loaded into the agent's system prompt at runtime.
-10. [`docs/concierge.md`](docs/concierge.md) — Hangar voice; loaded into the agent's system prompt.
+1. [`docs/2026-05-10-adr-016-phase-4-plan.md`](docs/2026-05-10-adr-016-phase-4-plan.md) — ADR-016, Phase 4 plan (read this first; D1-D6 + prereqs).
+2. [`docs/2026-05-09-phase-3-close.md`](docs/2026-05-09-phase-3-close.md) — ADR-014, Phase 3 retrospective.
+3. [`docs/2026-05-10-adr-015-vault-adapter-audit.md`](docs/2026-05-10-adr-015-vault-adapter-audit.md) — ADR-015, VaultAdapter audit findings + Phase 4 prereqs.
+4. [`docs/02_SPEC.md`](docs/02_SPEC.md) — v0.1 spec (binding).
+5. [`docs/03_PACKAGE_JSON.md`](docs/03_PACKAGE_JSON.md) — dependency rationale.
+6. [`docs/04_MANIFEST_JSON.md`](docs/04_MANIFEST_JSON.md) — Obsidian manifest fields.
+7. [`docs/05_CONDUIT_AGENT_SKETCH.md`](docs/05_CONDUIT_AGENT_SKETCH.md) — agent class shape.
+8. [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) — ADR-010 (process).
+9. [`docs/embed_interface.md`](docs/embed_interface.md) — embedding contract v1 (shared with corpus-ingest).
+10. [`docs/THAD_MAN.md`](docs/THAD_MAN.md) — vault constitution; loaded into the agent's system prompt at runtime.
+11. [`docs/concierge.md`](docs/concierge.md) — Hangar voice; loaded into the agent's system prompt.
 
 ## Decision authority hierarchy
 
@@ -52,7 +53,7 @@ When unsure (per ADR-010 §4):
 | 1 — Spec | `docs/02_SPEC.md` etc. | done (in vault, mirrored to `docs/`) |
 | 2 — Scaffold | esbuild, manifest, plugin entry | done |
 | 3 — Read layer | side panel, retrieval, tools, budget — **= v0.1 ship (shipped as v0.2.3)** | done |
-| 4 — Write layer | diff-first writes, transaction log, undo | next |
+| 4 — Write layer | diff-first writes, transaction log, undo | in progress (v0.3.0 = MVP; v0.5.0 = close) |
 | 5 — Organization engine | auto-routing, MOC maintenance — **= v0.5** | future |
 | 6 — Activity stream + MCP bridge | events, alerts, digest | future |
 | 7 — Curator | proactive suggestions | future |
