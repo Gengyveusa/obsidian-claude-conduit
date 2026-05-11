@@ -10,6 +10,8 @@ import { makeReadNoteTool } from './agent/tools/read_note';
 import { makeSearchVaultTool } from './agent/tools/search_vault';
 import { BudgetTracker } from './budget/BudgetTracker';
 import { PluginDataBudgetPersistence } from './budget/PluginDataBudgetPersistence';
+import type { MessagesAPI } from './agent/ConduitAgent';
+import { SystemCheck, formatReport, formatSummary } from './diag/SystemCheck';
 import { IndexCoordinator } from './indexing/IndexCoordinator';
 import { IndexPersistence } from './indexing/IndexPersistence';
 import { ConversationLogger } from './log/ConversationLogger';
@@ -94,6 +96,14 @@ export default class SagittariusPlugin extends Plugin {
       name: 'Rebuild retrieval index from scratch',
       callback: () => {
         void this.runBuild({ rebuild: true });
+      },
+    });
+
+    this.addCommand({
+      id: 'system-check',
+      name: 'System check',
+      callback: () => {
+        void this.runSystemCheck();
       },
     });
 
@@ -220,6 +230,44 @@ export default class SagittariusPlugin extends Plugin {
       console.error(`[sagittarius] index build FAILED: ${msg}`);
       new Notice(`Sagittarius: index build failed — ${msg}.`);
     }
+  }
+
+  /**
+   * Run live health checks against every external surface (Anthropic, HF,
+   * vault, engine, retrieval). Surfaces a summary Notice + detailed
+   * console.warn line. Built to make v0.2.x-class production-only bugs
+   * surface in seconds.
+   */
+  private async runSystemCheck(): Promise<void> {
+    new Notice('Sagittarius: running system check…');
+    let anthropic: MessagesAPI | null = null;
+    if (this.settings.apiKey.length > 0) {
+      const client = new Anthropic({ apiKey: this.settings.apiKey, dangerouslyAllowBrowser: true });
+      anthropic = client.messages;
+    }
+    const adapter = new VaultAdapterImpl(this.app);
+    const retrieval =
+      this.engine && this.embedClient
+        ? new RetrievalLayer({ selfEngine: this.engine, embedClient: this.embedClient })
+        : null;
+    if (!this.engine) {
+      new Notice('Sagittarius: system check requires a loaded engine. Restart the plugin.');
+      return;
+    }
+    const checker = new SystemCheck({
+      manifestVersion: this.manifest.version,
+      hasAnthropicKey: this.settings.apiKey.length > 0,
+      hasHuggingFaceKey: this.settings.huggingfaceApiKey.length > 0,
+      anthropic,
+      defaultModel: this.settings.defaultModel,
+      adapter,
+      engine: this.engine,
+      embedClient: this.embedClient ?? null,
+      retrieval,
+    });
+    const report = await checker.run();
+    new Notice(formatSummary(report));
+    console.warn(formatReport(report));
   }
 
   /** Background-friendly auto-index runner. Kept silent on success. */
