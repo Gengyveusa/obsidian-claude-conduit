@@ -3,6 +3,7 @@ import { ItemView, MarkdownRenderer, Notice, type WorkspaceLeaf } from 'obsidian
 
 import type { TurnResult } from '../agent/ConduitAgent';
 import type SagittariusPlugin from '../main';
+import type { Decision, Proposal, ProposalDiff } from '../writes/types';
 
 export const CHAT_VIEW_TYPE = 'sagittarius-chat';
 
@@ -54,12 +55,70 @@ export class ChatView extends ItemView {
     this.renderInputRow(root);
     this.statusEl = root.createDiv({ cls: 'sagittarius-status' });
     this.refreshStatus();
+
+    // Register as the active approval surface so Phase 4 write tools
+    // route their proposals through this view's diff card.
+    this.plugin.approvalGate.set((proposal) => this.requestApproval(proposal));
+
     return Promise.resolve();
   }
 
   override onClose(): Promise<void> {
+    this.plugin.approvalGate.set(null);
     this.containerEl.empty();
     return Promise.resolve();
+  }
+
+  /**
+   * Render a diff card for the proposal and return a Promise that resolves
+   * with the user's decision. Called by `CallbackApprovalGate` per ADR-016
+   * D2 — inline + per-tool + always-required approval.
+   */
+  requestApproval(proposal: Proposal): Promise<Decision> {
+    return new Promise<Decision>((resolve) => {
+      this.clearEmptyState();
+      const card = this.messagesEl.createDiv({ cls: 'sagittarius-diff-card' });
+
+      const header = card.createDiv({ cls: 'sagittarius-diff-header' });
+      header.createEl('strong', { text: proposal.toolName });
+      header.createSpan({
+        cls: 'sagittarius-diff-path',
+        text: ` · ${proposal.diff.path}`,
+      });
+
+      const body = card.createDiv({ cls: 'sagittarius-diff-body' });
+      renderProposalDiff(body, proposal.diff);
+
+      const buttons = card.createDiv({ cls: 'sagittarius-diff-buttons' });
+      const acceptBtn = buttons.createEl('button', {
+        text: 'Accept',
+        cls: 'sagittarius-diff-accept',
+      });
+      const rejectBtn = buttons.createEl('button', {
+        text: 'Reject',
+        cls: 'sagittarius-diff-reject',
+      });
+
+      const finalize = (decoration: string, lockedClass: string): void => {
+        acceptBtn.disabled = true;
+        rejectBtn.disabled = true;
+        card.addClass(lockedClass);
+        const note = card.createDiv({ cls: 'sagittarius-diff-resolution' });
+        note.setText(decoration);
+        this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+      };
+
+      acceptBtn.addEventListener('click', () => {
+        finalize('✓ Accepted', 'sagittarius-diff-accepted');
+        resolve({ kind: 'accept' });
+      });
+      rejectBtn.addEventListener('click', () => {
+        finalize('✗ Rejected', 'sagittarius-diff-rejected');
+        resolve({ kind: 'reject', reason: 'user rejected via chat panel' });
+      });
+
+      this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
+    });
   }
 
   private renderHeader(parent: HTMLElement): void {
@@ -242,4 +301,32 @@ function truncate(s: string, max: number): string {
     return s;
   }
   return `${s.slice(0, max)}…`;
+}
+
+/**
+ * Render a `ProposalDiff` into the diff card body. v0.3.0 supports the two
+ * variants used by `create_note` and `append_to_note`; later phases extend.
+ *
+ * Output style: pre-formatted block with `+`/` ` prefixes per line, mimicking
+ * `git diff` so the visual is familiar. We keep this dumb on purpose — once
+ * `patch_note` arrives in v0.3.x and we have real ops, this will get a
+ * proper diff renderer.
+ */
+function renderProposalDiff(parent: HTMLElement, diff: ProposalDiff): void {
+  const pre = parent.createEl('pre', { cls: 'sagittarius-diff-pre' });
+  if (diff.kind === 'create-file') {
+    for (const line of diff.content.split('\n')) {
+      pre.createDiv({ cls: 'sagittarius-diff-line-add', text: `+ ${line}` });
+    }
+    return;
+  }
+  // append-to-file: show last lines of existing tail as context, then new lines as +
+  if (diff.existingTail.length > 0) {
+    for (const line of diff.existingTail.split('\n')) {
+      pre.createDiv({ cls: 'sagittarius-diff-line-ctx', text: `  ${line}` });
+    }
+  }
+  for (const line of diff.appendedContent.split('\n')) {
+    pre.createDiv({ cls: 'sagittarius-diff-line-add', text: `+ ${line}` });
+  }
 }

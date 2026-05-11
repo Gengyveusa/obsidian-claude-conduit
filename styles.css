@@ -155,3 +155,77 @@
   color: var(--text-muted);
   margin-bottom: 0.6em;
 }
+
+/* Phase 4 — diff card for write-tool proposals. */
+.sagittarius-diff-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 0.75em;
+  margin: 0.5em 0;
+  background: var(--background-secondary);
+}
+
+.sagittarius-diff-header {
+  font-size: 0.85em;
+  margin-bottom: 0.4em;
+}
+
+.sagittarius-diff-path {
+  color: var(--text-muted);
+  font-family: var(--font-monospace);
+}
+
+.sagittarius-diff-body {
+  margin-bottom: 0.5em;
+}
+
+.sagittarius-diff-pre {
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 0.5em;
+  font-family: var(--font-monospace);
+  font-size: 0.85em;
+  max-height: 20em;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+.sagittarius-diff-line-add {
+  color: var(--text-success, #5cb85c);
+}
+
+.sagittarius-diff-line-ctx {
+  color: var(--text-muted);
+}
+
+.sagittarius-diff-buttons {
+  display: flex;
+  gap: 0.5em;
+}
+
+.sagittarius-diff-accept {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
+
+.sagittarius-diff-reject {
+  background: var(--background-modifier-error);
+  color: var(--text-on-accent);
+}
+
+.sagittarius-diff-resolution {
+  margin-top: 0.5em;
+  font-size: 0.85em;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.sagittarius-diff-accepted {
+  border-color: var(--text-success, #5cb85c);
+}
+
+.sagittarius-diff-rejected {
+  opacity: 0.7;
+}

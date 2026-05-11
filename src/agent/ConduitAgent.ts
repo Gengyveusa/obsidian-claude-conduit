@@ -12,6 +12,7 @@ import type {
 import type { ConversationCitation, ConversationLogger } from '../log/ConversationLogger';
 import type { BudgetTracker } from '../budget/BudgetTracker';
 import type { RetrievalLayer } from '../retrieval/RetrievalLayer';
+import type { WriteToolContext } from '../writes/WriteToolContext';
 import type { ToolRegistry } from './ToolRegistry';
 
 const MAX_STEPS = 20;
@@ -61,6 +62,14 @@ export interface ConduitAgentDeps {
   budget: BudgetTracker;
   logger: ConversationLogger;
   systemPromptParts: SystemPromptParts;
+  /**
+   * Per-turn transaction lifecycle for Phase 4 write tools (ADR-016 D3).
+   * `chat()` calls `ctx.begin()` before the tool-use loop and `ctx.end()`
+   * (or `ctx.abandon()` on failure) after — write tools call `ctx.record()`
+   * during their handlers. Required even when no write tools are
+   * registered; an empty transaction is a no-op.
+   */
+  ctx: WriteToolContext;
 }
 
 export interface TurnResult {
@@ -104,101 +113,128 @@ export class ConduitAgent {
     // 0. Pre-flight budget check.
     this.deps.budget.assertAvailable(MAX_OUTPUT_TOKENS);
 
-    // 1. vault-qa: one pre-retrieval pass to seed the system prompt.
-    const retrieved = await this.preRetrieve(userMessage, mode);
+    // 0.5. Open a transaction for any write tools that run in this turn.
+    // Always opened, even if no writes happen; empty transactions are
+    // no-ops (`builder.commit()` returns null without persisting). The
+    // `finally` block at the bottom of this method abandons the
+    // transaction on any throw, so the write log can never get stuck open.
+    this.deps.ctx.begin();
 
-    // 2. Build the system prompt with cache breakpoints.
-    const system = this.buildSystemPrompt(retrieved, mode);
+    try {
+      // 1. vault-qa: one pre-retrieval pass to seed the system prompt.
+      const retrieved = await this.preRetrieve(userMessage, mode);
 
-    // 3. Compose the message stack.
-    const messages: MessageParam[] = [
-      ...history,
-      { role: 'user', content: userMessage },
-    ];
+      // 2. Build the system prompt with cache breakpoints.
+      const system = this.buildSystemPrompt(retrieved, mode);
 
-    let stepCount = 0;
-    let finalText = '';
-    const citations: ConversationCitation[] = retrieved.map((r) => ({
-      path: r.path,
-      chunkIndex: r.chunkIndex,
-      score: r.score,
-      snippet: r.snippet,
-    }));
-    const toolsUsed = new Set<string>();
-    const notesReferenced = new Set<string>();
-    let tokensIn = 0;
-    let tokensOut = 0;
+      // 3. Compose the message stack.
+      const messages: MessageParam[] = [
+        ...history,
+        { role: 'user', content: userMessage },
+      ];
 
-    // 4. tool-use ↔ model loop.
-    while (stepCount < MAX_STEPS) {
-      stepCount++;
+      let stepCount = 0;
+      let finalText = '';
+      const citations: ConversationCitation[] = retrieved.map((r) => ({
+        path: r.path,
+        chunkIndex: r.chunkIndex,
+        score: r.score,
+        snippet: r.snippet,
+      }));
+      const toolsUsed = new Set<string>();
+      const notesReferenced = new Set<string>();
+      let tokensIn = 0;
+      let tokensOut = 0;
 
-      const response = await this.callModel(system, messages);
-      tokensIn += response.usage.input_tokens;
-      tokensOut += response.usage.output_tokens;
-      messages.push({ role: 'assistant', content: response.content });
+      // 4. tool-use ↔ model loop.
+      while (stepCount < MAX_STEPS) {
+        stepCount++;
 
-      if (response.stop_reason === 'end_turn') {
-        finalText = extractText(response.content);
-        if (onToken && finalText) {
-          onToken(finalText);
+        const response = await this.callModel(system, messages);
+        tokensIn += response.usage.input_tokens;
+        tokensOut += response.usage.output_tokens;
+        messages.push({ role: 'assistant', content: response.content });
+
+        if (response.stop_reason === 'end_turn') {
+          finalText = extractText(response.content);
+          if (onToken && finalText) {
+            onToken(finalText);
+          }
+          break;
         }
+
+        if (response.stop_reason === 'tool_use') {
+          const toolUses = response.content.filter(isToolUseBlock);
+          const toolResults = await Promise.all(
+            toolUses.map((tu) =>
+              this.runTool(tu, citations, toolsUsed, notesReferenced),
+            ),
+          );
+          messages.push({ role: 'user', content: toolResults });
+          continue;
+        }
+
+        // Any other stop_reason (max_tokens, pause_turn) → bail with what we have.
+        finalText = extractText(response.content);
         break;
       }
 
-      if (response.stop_reason === 'tool_use') {
-        const toolUses = response.content.filter(isToolUseBlock);
-        const toolResults = await Promise.all(
-          toolUses.map((tu) => this.runTool(tu, citations, toolsUsed, notesReferenced)),
+      if (stepCount >= MAX_STEPS && !finalText) {
+        throw new Error(
+          `ConduitAgent exceeded ${MAX_STEPS} tool-use steps. ` +
+            `Likely cause: recursion in tool calls. Check the conversation log.`,
         );
-        messages.push({ role: 'user', content: toolResults });
-        continue;
       }
 
-      // Any other stop_reason (max_tokens, pause_turn) → bail with what we have.
-      finalText = extractText(response.content);
-      break;
+      // Close the transaction. Commits whatever write ops the loop recorded,
+      // or returns null + persists nothing if it was a read-only turn.
+      await this.deps.ctx.end();
+
+      // 5. Cost accounting + budget commit.
+      const costUsd = estimateCost(tokensIn, tokensOut, this.settings.defaultModel);
+      await this.deps.budget.commit({ tokensIn, tokensOut, costUsd });
+
+      const durationMs = Date.now() - startedAt;
+
+      // 6. Log the turn to the vault. The session is per-chat-turn-batch in
+      // v0.1; the caller (ChatView) holds onto it across turns. For now we
+      // mint a fresh session per call — refactor when ChatView lands.
+      // Pre-retrieval (vault-qa mode) seeds search_vault citations directly,
+      // so add their paths to notesReferenced too.
+      for (const c of citations) {
+        notesReferenced.add(c.path);
+      }
+
+      const session = this.deps.logger.startSession(this.settings.defaultModel);
+      await session.append({
+        userMessage,
+        assistantMessage: finalText,
+        mode,
+        model: this.settings.defaultModel,
+        tokensIn,
+        tokensOut,
+        costUsd,
+        citations,
+        notesReferenced: [...notesReferenced],
+        toolsUsed: [...toolsUsed],
+        stepCount,
+        durationMs,
+      });
+
+      return {
+        finalText,
+        citations,
+        steps: stepCount,
+        tokensIn,
+        tokensOut,
+        costUsd,
+        durationMs,
+      };
+    } finally {
+      // Defensive cleanup. abandon() is idempotent (no-op when ctx.end()
+      // already closed the transaction) and safe to call on throw paths.
+      this.deps.ctx.abandon();
     }
-
-    if (stepCount >= MAX_STEPS && !finalText) {
-      throw new Error(
-        `ConduitAgent exceeded ${MAX_STEPS} tool-use steps. ` +
-          `Likely cause: recursion in tool calls. Check the conversation log.`,
-      );
-    }
-
-    // 5. Cost accounting + budget commit.
-    const costUsd = estimateCost(tokensIn, tokensOut, this.settings.defaultModel);
-    await this.deps.budget.commit({ tokensIn, tokensOut, costUsd });
-
-    const durationMs = Date.now() - startedAt;
-
-    // 6. Log the turn to the vault. The session is per-chat-turn-batch in
-    // v0.1; the caller (ChatView) holds onto it across turns. For now we
-    // mint a fresh session per call — refactor when ChatView lands.
-    // Pre-retrieval (vault-qa mode) seeds search_vault citations directly,
-    // so add their paths to notesReferenced too.
-    for (const c of citations) {
-      notesReferenced.add(c.path);
-    }
-
-    const session = this.deps.logger.startSession(this.settings.defaultModel);
-    await session.append({
-      userMessage,
-      assistantMessage: finalText,
-      mode,
-      model: this.settings.defaultModel,
-      tokensIn,
-      tokensOut,
-      costUsd,
-      citations,
-      notesReferenced: [...notesReferenced],
-      toolsUsed: [...toolsUsed],
-      stepCount,
-      durationMs,
-    });
-
-    return { finalText, citations, steps: stepCount, tokensIn, tokensOut, costUsd, durationMs };
   }
 
   private async preRetrieve(

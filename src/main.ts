@@ -3,6 +3,8 @@ import { Notice, Plugin, requestUrl } from 'obsidian';
 
 import { ConduitAgent } from './agent/ConduitAgent';
 import { ToolRegistry } from './agent/ToolRegistry';
+import { makeAppendToNoteTool } from './agent/tools/append_to_note';
+import { makeCreateNoteTool } from './agent/tools/create_note';
 import { makeGetBacklinksTool } from './agent/tools/get_backlinks';
 import { makeGetGraphNeighborhoodTool } from './agent/tools/get_graph_neighborhood';
 import { makeListFolderTool } from './agent/tools/list_folder';
@@ -28,12 +30,16 @@ import { SagittariusSettingTab } from './settings/SagittariusSettingTab';
 import { DEFAULT_SETTINGS, type SagittariusSettings } from './settings/types';
 import { ChatView, CHAT_VIEW_TYPE } from './views/ChatView';
 import { QuickQuestionModal } from './views/QuickQuestionModal';
+import { CallbackApprovalGate } from './writes/CallbackApprovalGate';
+import { JsonTransactionLog } from './writes/TransactionLog';
+import { WriteToolContext } from './writes/WriteToolContext';
 
 const PLUGIN_NAME = 'Sagittarius — Claude Conduit';
 const RIBBON_ICON = 'message-square';
 const CONSTITUTION_PATH = 'THAD_MAN.md';
 const HANGAR_VOICE_PATH = '21-Agents/concierge.md';
 const INDEX_DB_PATH = '.obsidian/plugins/obsidian-claude-conduit/index.sqlite';
+const TX_LOG_PATH = '.obsidian/plugins/obsidian-claude-conduit/transactions.json';
 
 interface AgentBundle {
   agent: ConduitAgent;
@@ -54,6 +60,13 @@ interface AgentBundle {
  */
 export default class SagittariusPlugin extends Plugin {
   settings: SagittariusSettings = DEFAULT_SETTINGS;
+  /**
+   * Phase 4 (v0.3.0+) approval surface. `ChatView` registers its
+   * `requestApproval` method on open and clears it on close. When no chat
+   * view is open, the gate auto-rejects so write tools surface an
+   * actionable error to the LLM. See ADR-016 D2.
+   */
+  readonly approvalGate = new CallbackApprovalGate();
   private agentBundle: AgentBundle | null = null;
   private engine?: SqliteEngine;
   private embedClient?: EmbedClient;
@@ -342,11 +355,31 @@ export default class SagittariusPlugin extends Plugin {
     const adapter = new VaultAdapterImpl(this.app);
     const cache = new MetadataCacheImpl(this.app);
 
+    // Phase 4 (v0.3.0): transaction log + write-tool context. The log
+    // persists to a JSON file under the plugin's data dir; the ctx wraps
+    // it for per-turn lifecycle (ConduitAgent opens/closes around each
+    // chat() call). Both are constructed even if no write tools end up
+    // registered — they're cheap and the agent always calls begin/end.
+    const txLog = new JsonTransactionLog({
+      adapter,
+      path: TX_LOG_PATH,
+    });
+    const writeCtx = new WriteToolContext(txLog);
+
     const tools = new ToolRegistry();
     tools.register(makeReadNoteTool(adapter));
     tools.register(makeListFolderTool(adapter));
     tools.register(makeGetBacklinksTool(cache));
     tools.register(makeGetGraphNeighborhoodTool(cache));
+
+    // v0.3.0 write tools per ADR-016 D5. Each routes its proposal through
+    // `this.approvalGate` (which delegates to whatever ChatView is open).
+    tools.register(
+      makeCreateNoteTool({ adapter, gate: this.approvalGate, ctx: writeCtx }),
+    );
+    tools.register(
+      makeAppendToNoteTool({ adapter, gate: this.approvalGate, ctx: writeCtx }),
+    );
 
     let retrieval: RetrievalLayer | undefined;
     if (this.engine && this.embedClient) {
@@ -382,6 +415,7 @@ export default class SagittariusPlugin extends Plugin {
       budget,
       logger,
       systemPromptParts,
+      ctx: writeCtx,
     };
     if (retrieval) {
       agentDeps.retrieval = retrieval;
