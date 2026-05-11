@@ -1,9 +1,11 @@
 import { VECTOR_DIM } from './SqliteEngine';
 
 /**
- * Minimal pipeline shape. transformers.js's actual return type is
- * elaborate (a `FeatureExtractionPipeline` with overloads); we only need
- * the call signature + the `.data` Float32Array on the result.
+ * Minimal pipeline shape — the call signature + a `.data` Float32Array
+ * on the result. The shape originated in the transformers.js era
+ * (ADR-012 deferred that) and is now satisfied by `HfInferenceFactory`'s
+ * SDK-backed pipeline. Kept narrow so future factories can plug in
+ * without dragging the SDK into tests.
  */
 export interface EmbedPipeline {
   (
@@ -23,13 +25,15 @@ export interface EmbedPipeline {
 export type EmbedPipelineFactory = () => Promise<EmbedPipeline>;
 
 /**
- * Wraps `@xenova/transformers`' feature-extraction pipeline for the
- * canonical `all-MiniLM-L6-v2` model (per the embedding contract §1).
- * NFC-normalizes input per §2 so byte-identical inputs always produce
- * byte-identical vectors regardless of Unicode encoding form.
+ * Wraps an `EmbedPipelineFactory` (production: `makeHfInferenceFactory`
+ * backed by `@huggingface/inference` SDK) for the canonical
+ * `all-MiniLM-L6-v2` model per the embedding contract §1. NFC-normalizes
+ * input per §2 so byte-identical inputs always produce byte-identical
+ * vectors regardless of Unicode encoding form.
  *
  * @example
- *   const client = new EmbedClient();
+ *   const factory = makeHfInferenceFactory({ apiKey, fetch });
+ *   const client = new EmbedClient(factory);
  *   const vec = await client.encode('Hello, vault.');  // 384-d Float32Array
  */
 export class EmbedClient {

@@ -1,23 +1,43 @@
+import { InferenceClient } from '@huggingface/inference';
+
 import type { EmbedPipeline, EmbedPipelineFactory } from './EmbedClient';
 import { VECTOR_DIM } from './SqliteEngine';
 
 /**
- * Embedding contract §1 model name. HF Inference (routed via the
- * `router.huggingface.co` "Inference Providers" gateway) hosts this
- * exact model — output is bit-compatible (within FP rounding) with the
- * local sentence-transformers/all-MiniLM-L6-v2 that corpus-ingest uses.
+ * Embedding contract §1 model. HF Inference Providers (the `hf-inference`
+ * provider routed via `router.huggingface.co`) hosts this exact model —
+ * output is bit-compatible (within FP rounding) with the local
+ * sentence-transformers/all-MiniLM-L6-v2 that corpus-ingest uses.
  *
- * The legacy `api-inference.huggingface.co/models/{id}` endpoint was
- * retired (returns 404 `Cannot POST /models/...`); v0.2.2 switched to
- * the router URL pattern. See ADR-013 postscript #2.
+ * The full endpoint URL is now the SDK's concern, not ours — see
+ * ADR-013 postscript #3 (v0.2.5: bundle the SDK).
  */
 const HF_MODEL = 'sentence-transformers/all-MiniLM-L6-v2';
-const HF_ENDPOINT = `https://router.huggingface.co/hf-inference/models/${HF_MODEL}/pipeline/feature-extraction`;
 
-/** Max wait we'll honor on a cold-start retry, regardless of HF's hint. */
-const MAX_COLD_START_WAIT_MS = 60_000;
+/**
+ * Tests inject a stub instead of pulling in the real SDK. Production wires
+ * the real `InferenceClient` from `@huggingface/inference`.
+ */
+export interface InferenceClientLike {
+  /**
+   * Declared as a function property (not a method) so call-site assertions
+   * via `expect(client.featureExtraction).toHaveBeenCalled()` don't trip
+   * `@typescript-eslint/unbound-method` — `this` isn't part of the contract
+   * for our stub-injected clients.
+   */
+  featureExtraction: (args: {
+    model?: string;
+    inputs: string | string[];
+    provider?: 'hf-inference';
+  }) => Promise<(number | number[] | number[][])[]>;
+}
 
-/** Minimal subset of `fetch` we depend on — lets tests inject a mock. */
+/**
+ * Minimal subset of `fetch` we still expose for legacy tests that exercise
+ * the old hand-rolled HTTP code path. Kept for the `obsidianRequestUrl`
+ * adapter's `makeObsidianRequestUrlFetch` companion, which keeps working
+ * even after v0.2.5 swaps to the SDK.
+ */
 export type FetchLike = (
   input: string,
   init: { method: string; headers: Record<string, string>; body: string },
@@ -33,31 +53,39 @@ export interface HfFactoryOptions {
   apiKey: string;
   /** Override the model id. Defaults to the canonical contract model. */
   model?: string;
-  /** Inject a fake fetch in tests. Defaults to global fetch. */
-  fetchImpl?: FetchLike;
   /**
-   * Sleep helper used during cold-start retry. Tests inject a no-op
-   * to keep the suite fast.
+   * Custom `fetch` used by the SDK. Production passes a `requestUrl()`-
+   * backed adapter from `obsidianRequestUrl.ts` to dodge renderer CORS
+   * preflight on `app://obsidian.md`.
    */
-  sleepImpl?: (ms: number) => Promise<void>;
+  fetch?: typeof fetch;
+  /**
+   * Test-only: inject a pre-built client so tests don't need to mock the
+   * SDK's `fetch` plumbing. Production constructs the real client.
+   */
+  client?: InferenceClientLike;
 }
 
 /**
- * Build an EmbedPipelineFactory backed by HuggingFace's hosted Inference
- * API per ADR-013. Returns an `EmbedPipeline` whose call signature
- * matches the existing transformers.js contract — drop-in replacement
- * for the old defaultFactory in EmbedClient.ts.
+ * Build an `EmbedPipelineFactory` backed by HuggingFace's official
+ * `@huggingface/inference` SDK. Replaces v0.2.1–v0.2.4's hand-rolled
+ * fetch + URL constants — the SDK now owns URL evolution, provider
+ * routing, and retry behavior. We just feed it our CORS-free transport
+ * and unflatten its response.
  *
  * Failure modes (all surfaced as actionable errors per spec §8):
  *   - Empty `apiKey` → throws at factory call, before any network I/O.
- *   - HF 503 with `estimated_time` → wait that many seconds + retry once.
- *   - HF 429 / 5xx other than the cold-start case → throw with status
- *     and response body so the caller can show it.
- *   - Wrong-shape response → throw; transformers.js' surface guarantees
- *     a 384-d Float32Array per input.
+ *   - SDK throws (network, 401, 503, etc.) → re-throw with context.
+ *   - Wrong-shape response → throw with the unexpected shape so the
+ *     caller can show it. Contract guarantees a 384-d Float32Array per
+ *     input.
  *
  * @example
- *   const factory = makeHfInferenceFactory({ apiKey: settings.huggingfaceApiKey });
+ *   import { requestUrl } from 'obsidian';
+ *   const factory = makeHfInferenceFactory({
+ *     apiKey: settings.huggingfaceApiKey,
+ *     fetch: makeObsidianRequestUrlNativeFetch(requestUrl),
+ *   });
  *   const client = new EmbedClient(factory);
  *   const vec = await client.encode('Hello, vault.');
  */
@@ -71,12 +99,10 @@ export function makeHfInferenceFactory(opts: HfFactoryOptions): EmbedPipelineFac
       );
     }
 
-    // The `as FetchLike` cast is redundant in strict TS but eslint with
-    // type-check info insists on it being typed; assign with annotation.
-    const fetchImpl: FetchLike = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
-    const sleepImpl = opts.sleepImpl ?? defaultSleep;
     const model = opts.model ?? HF_MODEL;
-    const endpoint = `https://router.huggingface.co/hf-inference/models/${model}/pipeline/feature-extraction`;
+    const client: InferenceClientLike =
+      opts.client ??
+      new InferenceClient(opts.apiKey, opts.fetch ? { fetch: opts.fetch } : undefined);
 
     const pipeline: EmbedPipeline = async (text) => {
       const inputs = Array.isArray(text) ? text : [text];
@@ -84,28 +110,29 @@ export function makeHfInferenceFactory(opts: HfFactoryOptions): EmbedPipelineFac
       // identical bytes regardless of Unicode form.
       const normalized = inputs.map((t) => t.normalize('NFC'));
 
-      const vectors = await callWithColdStartRetry(
-        fetchImpl,
-        sleepImpl,
-        endpoint,
-        opts.apiKey,
-        normalized,
-      );
-
-      // Flatten into a single Float32Array of length (n × VECTOR_DIM)
-      // so the existing EmbedPipeline contract returns one buffer.
-      if (vectors.length !== inputs.length) {
+      let raw: (number | number[] | number[][])[];
+      try {
+        raw = await client.featureExtraction({
+          model,
+          inputs: normalized,
+          provider: 'hf-inference',
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
         throw new Error(
-          `HfInferenceFactory: API returned ${vectors.length} vectors for ${inputs.length} inputs.`,
+          `HfInferenceFactory: SDK featureExtraction failed for model "${model}": ${msg}`,
         );
       }
+
+      const vectors = normalizeVectors(raw, inputs.length);
+
       const flat = new Float32Array(vectors.length * VECTOR_DIM);
       for (let i = 0; i < vectors.length; i++) {
         const v = vectors[i];
         if (v.length !== VECTOR_DIM) {
           throw new Error(
             `HfInferenceFactory: vector ${i} is ${v.length}-d, expected ${VECTOR_DIM}-d. ` +
-              `Wrong model? Endpoint: ${endpoint}.`,
+              `Wrong model? model="${model}".`,
           );
         }
         for (let j = 0; j < VECTOR_DIM; j++) {
@@ -121,76 +148,46 @@ export function makeHfInferenceFactory(opts: HfFactoryOptions): EmbedPipelineFac
 }
 
 /**
- * Single POST to the HF Inference API, retrying once if the response is
- * a cold-start 503 with an `estimated_time` hint.
+ * The SDK's return type is `(number | number[] | number[][])[]` — a union
+ * shaped by how feature-extraction servers vary across providers (some
+ * pool, some don't). For sentence-transformers/all-MiniLM-L6-v2 with the
+ * `hf-inference` provider we expect `number[][]` (one 384-d vector per
+ * input) but we accept `number[]` for the single-input case and a few
+ * other reasonable shapes.
  */
-async function callWithColdStartRetry(
-  fetchImpl: FetchLike,
-  sleepImpl: (ms: number) => Promise<void>,
-  endpoint: string,
-  apiKey: string,
-  inputs: string[],
-): Promise<number[][]> {
-  const body = JSON.stringify({ inputs });
-  const headers = {
-    Authorization: `Bearer ${apiKey}`,
-    'Content-Type': 'application/json',
-  };
-
-  const first = await fetchImpl(endpoint, { method: 'POST', headers, body });
-  if (first.ok) {
-    return parseVectors(await first.json());
-  }
-
-  // Cold-start path: HF returns 503 with { error, estimated_time } when
-  // the model is being loaded onto an inference instance.
-  if (first.status === 503) {
-    const text = await first.text();
-    let parsed: { estimated_time?: unknown; error?: unknown } = {};
-    try {
-      parsed = JSON.parse(text) as typeof parsed;
-    } catch {
-      // Non-JSON 503 — treat as fatal.
-    }
-    const hint = typeof parsed.estimated_time === 'number' ? parsed.estimated_time : null;
-    if (hint !== null) {
-      const waitMs = Math.min(Math.ceil(hint * 1000) + 500, MAX_COLD_START_WAIT_MS);
-      await sleepImpl(waitMs);
-      const second = await fetchImpl(endpoint, { method: 'POST', headers, body });
-      if (second.ok) {
-        return parseVectors(await second.json());
-      }
-      throw new Error(
-        `HfInferenceFactory: cold-start retry failed (${second.status}): ${await second.text()}`,
-      );
-    }
-  }
-
-  throw new Error(
-    `HfInferenceFactory: ${first.status} from ${endpoint}: ${await first.text()}`,
-  );
-}
-
-function parseVectors(raw: unknown): number[][] {
+function normalizeVectors(
+  raw: (number | number[] | number[][])[],
+  expectedCount: number,
+): number[][] {
   if (!Array.isArray(raw)) {
     throw new Error(
       `HfInferenceFactory: expected array response, got ${typeof raw}: ${JSON.stringify(raw).slice(0, 120)}`,
     );
   }
-  const out: number[][] = [];
-  for (const row of raw) {
-    if (!Array.isArray(row)) {
-      throw new Error(
-        `HfInferenceFactory: expected row to be an array of numbers, got ${typeof row}.`,
-      );
-    }
-    out.push(row as number[]);
+
+  // Single-input shortcut: if expectedCount === 1 and raw is number[],
+  // treat it as one row.
+  if (expectedCount === 1 && raw.length > 0 && typeof raw[0] === 'number') {
+    return [raw as number[]];
   }
-  return out;
+
+  // Standard shape: number[][] — one row per input.
+  if (raw.length === expectedCount && raw.every((r) => Array.isArray(r) && typeof r[0] === 'number')) {
+    return raw as number[][];
+  }
+
+  // Single nested array (e.g. some providers return [[v1,v2,...]] for one input).
+  if (expectedCount === 1 && raw.length === 1 && Array.isArray(raw[0])) {
+    const first = raw[0];
+    if (typeof first[0] === 'number') {
+      return [first as number[]];
+    }
+  }
+
+  throw new Error(
+    `HfInferenceFactory: API returned ${raw.length} rows for ${expectedCount} inputs ` +
+      `(unexpected shape: ${JSON.stringify(raw).slice(0, 120)})`,
+  );
 }
 
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-export { HF_MODEL, HF_ENDPOINT, MAX_COLD_START_WAIT_MS };
+export { HF_MODEL };
