@@ -6,7 +6,7 @@ This file orients a Claude Code session opened against this repo. Substrate ques
 
 - **Name:** Sagittarius — Claude Conduit (`obsidian-claude-conduit`)
 - **What:** Native Obsidian plugin. Chat with your vault, retrieval-grounded.
-- **Status:** v0.3.0 — Phase 4 (Write Layer) foundation **shipped**. v0.2.6 closed Phase 3 cleanup; v0.3.0 lands the first two write tools (`create_note`, `append_to_note`) with diff-first approval, per-turn transaction log, and ADR-016's full plumbing. Next: v0.3.x adds the read-modify-write trio (`patch_note`, `rewrite_section`, `add_frontmatter`) with conflict detection. v0.5 milestone. v1.0 = community release.
+- **Status:** v0.3.1 — Phase 4 (Write Layer) read-modify-write trio **shipped**. v0.3.0 landed `create_note` + `append_to_note` + diff-first approval + per-turn transaction log. v0.3.1 adds the read-modify-write trio: `patch_note` (structured ops), `rewrite_section` (header-bounded body replace), `add_frontmatter` (YAML field upsert), plus `ConflictDetector` (mtime + SHA-256, ADR-016 P2). Next: v0.4.x graph trio (`move_note`, `rename_note`, `link_notes`). v0.5.0 closes Phase 4 with `file_asset` + undo command. v1.0 = community release.
 - **Build pattern:** `pair-via-claude-code` per [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) (ADR-010). Thad decides; Claude implements.
 
 ## Read first (in this order)
