@@ -47,6 +47,7 @@ import { JsonSuggestionQueue, type SuggestionQueue } from './organization/Sugges
 import type { MocAddSuggestion, RouteSuggestion } from './organization/types';
 import { ChatView, CHAT_VIEW_TYPE } from './views/ChatView';
 import { QuickQuestionModal } from './views/QuickQuestionModal';
+import { ActivityView, ACTIVITY_VIEW_TYPE } from './views/ActivityView';
 import { SuggestionsView, SUGGESTIONS_VIEW_TYPE, destinationPathFor } from './views/SuggestionsView';
 import { UndoConfirmModal } from './views/UndoConfirmModal';
 import { CallbackApprovalGate } from './writes/CallbackApprovalGate';
@@ -118,17 +119,21 @@ export default class SagittariusPlugin extends Plugin {
     // Phase 6 (v0.8.0): activity stream — constructed early so every
     // subsystem that wires it in (TransactionLog, OrganizationWatcher,
     // apply/undo/index paths) can pass it through. Persistent JSON log
-    // capped at 1000 entries per ADR-019 D4.
-    this.activityLog = new JsonActivityLog({
-      adapter: new VaultAdapterImpl(this.app),
-      path: ACTIVITY_LOG_PATH,
-    });
+    // capped at 1000 entries per ADR-019 D4. Disabled = null = every
+    // `this.activityLog?.record(...)` site no-ops.
+    if (this.settings.activityLogEnabled) {
+      this.activityLog = new JsonActivityLog({
+        adapter: new VaultAdapterImpl(this.app),
+        path: ACTIVITY_LOG_PATH,
+      });
+    }
 
     this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
     this.registerView(
       SUGGESTIONS_VIEW_TYPE,
       (leaf) => new SuggestionsView(leaf, this),
     );
+    this.registerView(ACTIVITY_VIEW_TYPE, (leaf) => new ActivityView(leaf, this));
 
     this.addRibbonIcon(RIBBON_ICON, PLUGIN_NAME, () => {
       void this.activateChatView();
@@ -177,6 +182,14 @@ export default class SagittariusPlugin extends Plugin {
       name: 'Open suggestions panel',
       callback: () => {
         void this.activateSuggestionsView();
+      },
+    });
+
+    this.addCommand({
+      id: 'open-activity',
+      name: 'Open activity stream',
+      callback: () => {
+        void this.activateActivityView();
       },
     });
 
@@ -394,6 +407,22 @@ export default class SagittariusPlugin extends Plugin {
     await this.app.workspace.revealLeaf(leaf);
   }
 
+  /** Open the activity stream side panel (creates a leaf if missing). */
+  async activateActivityView(): Promise<void> {
+    const existing = this.app.workspace.getLeavesOfType(ACTIVITY_VIEW_TYPE);
+    if (existing.length > 0) {
+      await this.app.workspace.revealLeaf(existing[0]);
+      return;
+    }
+    const leaf = this.app.workspace.getRightLeaf(false);
+    if (leaf === null) {
+      new Notice('Sagittarius: could not open activity panel.');
+      return;
+    }
+    await leaf.setViewState({ type: ACTIVITY_VIEW_TYPE, active: true });
+    await this.app.workspace.revealLeaf(leaf);
+  }
+
   /**
    * Run a manual sweep across watched folders. Notice-only — the
    * SuggestionsView re-renders independently when the user looks at it.
@@ -565,11 +594,17 @@ export default class SagittariusPlugin extends Plugin {
     }
   }
 
-  /** Re-render the SuggestionsView if it's open, and refresh the status bar. */
+  /** Re-render the SuggestionsView + ActivityView if open; refresh the status bar. */
   async refreshSuggestionsView(): Promise<void> {
     for (const leaf of this.app.workspace.getLeavesOfType(SUGGESTIONS_VIEW_TYPE)) {
       const view = leaf.view;
       if (view instanceof SuggestionsView) {
+        await view.refresh();
+      }
+    }
+    for (const leaf of this.app.workspace.getLeavesOfType(ACTIVITY_VIEW_TYPE)) {
+      const view = leaf.view;
+      if (view instanceof ActivityView) {
         await view.refresh();
       }
     }

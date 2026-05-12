@@ -98,6 +98,18 @@ export interface SagittariusSettings {
    * v0.6.0; populated by users once v0.6.x ships moc-add.
    */
   organizationMocFolders: string[];
+
+  // Phase 6 activity stream (per ADR-019 D4 + architecture note)
+  /**
+   * Master switch for the activity stream. When on, every classifier
+   * call, suggestion lifecycle event, write, undo, and error is
+   * persisted to `<plugin-data>/activity.json` (rolling 1000-entry cap)
+   * and surfaced in the `Sagittarius: Open activity stream` panel.
+   * Default on — the disk footprint is tiny and the diagnostic value
+   * is the whole point of Phase 6. Toggling requires a plugin reload
+   * to fully apply (subsystems cache the dep at construction).
+   */
+  activityLogEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: SagittariusSettings = {
@@ -133,4 +145,6 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
   organizationMinConfidence: 0.6,
   organizationSweepIntervalSec: 0,
   organizationMocFolders: [],
+
+  activityLogEnabled: true,
 };

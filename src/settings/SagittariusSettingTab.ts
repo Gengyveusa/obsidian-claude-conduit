@@ -38,7 +38,34 @@ export class SagittariusSettingTab extends PluginSettingTab {
     this.renderLogSection(containerEl);
     this.renderWriteLayerSection(containerEl);
     this.renderOrganizationSection(containerEl);
+    this.renderActivitySection(containerEl);
     this.renderVoyageSection(containerEl);
+  }
+
+  private renderActivitySection(parent: HTMLElement): void {
+    parent.createEl('h3', { text: 'Activity stream (Phase 6)' });
+    parent.createEl('p', {
+      cls: 'setting-item-description',
+      text:
+        'Sagittarius records every classifier call, suggestion, write, and error to ' +
+        '`<plugin-data>/activity.json` (rolling 1000-entry cap). Open the panel via ' +
+        '`Cmd+P → Sagittarius: Open activity stream`. Per ADR-019.',
+    });
+
+    new Setting(parent)
+      .setName('Record activity log')
+      .setDesc(
+        'When on, subsystems emit events into the activity log. When off, every emission ' +
+          'site no-ops and the panel renders an empty-state nudge. Toggling requires a ' +
+          'plugin reload to fully apply (the watcher and transaction log cache the dep).',
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.activityLogEnabled).onChange(async (value) => {
+          this.plugin.settings.activityLogEnabled = value;
+          await this.plugin.saveSettings();
+          new Notice('Sagittarius: reload the plugin for the activity-log change to apply.');
+        }),
+      );
   }
 
   private renderOrganizationSection(parent: HTMLElement): void {
