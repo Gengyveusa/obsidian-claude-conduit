@@ -386,3 +386,12 @@
   font-size: 0.85em;
   padding: 0.2em 0.6em;
 }
+
+.sagittarius-status-bar {
+  color: var(--text-accent);
+}
+
+.sagittarius-status-bar:hover {
+  color: var(--text-accent-hover);
+  text-decoration: underline;
+}

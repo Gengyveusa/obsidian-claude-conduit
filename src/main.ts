@@ -97,6 +97,7 @@ export default class SagittariusPlugin extends Plugin {
   suggestionQueue: SuggestionQueue | null = null;
   private organizationWatcher: OrganizationWatcher | null = null;
   private organizationSweepHandle: number | null = null;
+  private organizationStatusBarEl: HTMLElement | null = null;
   private agentBundle: AgentBundle | null = null;
   private engine?: SqliteEngine;
   private embedClient?: EmbedClient;
@@ -177,6 +178,18 @@ export default class SagittariusPlugin extends Plugin {
         void this.runSystemCheck();
       },
     });
+
+    this.organizationStatusBarEl = this.addStatusBarItem();
+    this.organizationStatusBarEl.addClass('sagittarius-status-bar');
+    this.organizationStatusBarEl.style.cursor = 'pointer';
+    this.organizationStatusBarEl.addEventListener('click', () => {
+      void this.activateSuggestionsView();
+    });
+    this.organizationStatusBarEl.setAttribute(
+      'aria-label',
+      'Sagittarius suggestions — click to open panel',
+    );
+    this.organizationStatusBarEl.style.display = 'none';
 
     try {
       await this.initializeIndexing();
@@ -487,7 +500,7 @@ export default class SagittariusPlugin extends Plugin {
     }
   }
 
-  /** Re-render the SuggestionsView if it's open. */
+  /** Re-render the SuggestionsView if it's open, and refresh the status bar. */
   async refreshSuggestionsView(): Promise<void> {
     for (const leaf of this.app.workspace.getLeavesOfType(SUGGESTIONS_VIEW_TYPE)) {
       const view = leaf.view;
@@ -495,6 +508,39 @@ export default class SagittariusPlugin extends Plugin {
         await view.refresh();
       }
     }
+    await this.refreshStatusBar();
+  }
+
+  /**
+   * Update the status bar pill — shows "✦ N suggestion(s)" when the
+   * organization engine is on and the queue has at least one visible
+   * (above min-confidence) item. Hidden when the engine is off OR the
+   * queue is empty / entirely below threshold (avoid clutter when there's
+   * nothing actionable).
+   *
+   * Called from `refreshSuggestionsView` (covers Apply/Skip/sweep paths)
+   * and from `refreshOrganizationEngine` (covers settings toggles).
+   */
+  private async refreshStatusBar(): Promise<void> {
+    const el = this.organizationStatusBarEl;
+    if (el === null) {
+      return;
+    }
+    if (this.suggestionQueue === null) {
+      el.style.display = 'none';
+      return;
+    }
+    const minConfidence = this.settings.organizationMinConfidence;
+    const visible = await this.suggestionQueue.list({
+      includeDeferred: true,
+      minConfidence,
+    });
+    if (visible.length === 0) {
+      el.style.display = 'none';
+      return;
+    }
+    el.setText(`✦ ${visible.length} suggestion${visible.length === 1 ? '' : 's'}`);
+    el.style.display = '';
   }
 
   /**
