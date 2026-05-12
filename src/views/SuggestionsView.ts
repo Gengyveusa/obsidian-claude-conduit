@@ -210,6 +210,12 @@ export class SuggestionsView extends ItemView {
       return;
     }
     await queue.remove(s.id);
+    await this.plugin.activityLog?.record({
+      kind: 'suggestion.skipped',
+      suggestionId: s.id,
+      notePath: s.notePath,
+      bulk: false,
+    });
     await this.refresh();
   }
 
@@ -284,6 +290,12 @@ export class SuggestionsView extends ItemView {
     }
     for (const s of snapshot) {
       await queue.remove(s.id);
+      await this.plugin.activityLog?.record({
+        kind: 'suggestion.skipped',
+        suggestionId: s.id,
+        notePath: s.notePath,
+        bulk: true,
+      });
     }
     new Notice(`Sagittarius: skipped ${snapshot.length} suggestion(s).`);
     await this.refresh();

@@ -630,3 +630,130 @@ async function flush(): Promise<void> {
   });
 }
 
+describe('OrganizationWatcher — activity emission (v0.8.0 PR 2)', () => {
+  it('records classifier.ran + suggestion.enqueued for a route hit', async () => {
+    const { watcher, classifier } = makeHarness({
+      classifierOutcomes: [route({ confidence: 0.9 })],
+    });
+    void classifier; // touch to silence unused-var warning in this test
+    const recorded: Array<{ kind: string; [k: string]: unknown }> = [];
+    // Re-wire with activityLog stub by hand (harness doesn't expose it).
+    const harness = makeHarness({ classifierOutcomes: [route({ confidence: 0.9 })] });
+    const watcher2 = new OrganizationWatcher({
+      classifier: harness.classifier,
+      queue: harness.queue,
+      events: harness.events,
+      adapter: harness.adapter,
+      enabled: true,
+      watchedFolders: ['10-Inbox/'],
+      classifierModel: 'claude-sonnet-4-6',
+      activityLog: {
+        record: (input) => {
+          recorded.push({ ...input });
+          return Promise.resolve({
+            ...input,
+            id: 'fake',
+            timestamp: 1,
+          } as never);
+        },
+        list: () => Promise.resolve([]),
+        size: () => Promise.resolve(0),
+        clear: () => Promise.resolve(),
+      },
+      logger: { warn: () => {} },
+    });
+    void watcher; // unused first watcher
+    const out = await watcher2.classifyNote('10-Inbox/foo.md');
+    expect(out.enqueued).toBe(true);
+    expect(recorded.map((r) => r.kind)).toEqual([
+      'classifier.ran',
+      'suggestion.enqueued',
+    ]);
+    expect(recorded[0]).toMatchObject({
+      kind: 'classifier.ran',
+      notePath: '10-Inbox/foo.md',
+      model: 'claude-sonnet-4-6',
+      outcome: 'route',
+      confidence: 0.9,
+    });
+    expect(recorded[1]).toMatchObject({
+      kind: 'suggestion.enqueued',
+      suggestionKind: 'route',
+      notePath: '10-Inbox/foo.md',
+      target: '70-Memory/notes',
+      confidence: 0.9,
+    });
+  });
+
+  it('records classifier.ran with outcome=keep when route returns null and no moc-add deps', async () => {
+    const harness = makeHarness({ classifierOutcomes: [null] });
+    const recorded: Array<{ kind: string; [k: string]: unknown }> = [];
+    const watcher = new OrganizationWatcher({
+      classifier: harness.classifier,
+      queue: harness.queue,
+      events: harness.events,
+      adapter: harness.adapter,
+      enabled: true,
+      watchedFolders: ['10-Inbox/'],
+      classifierModel: 'claude-haiku-4-5-20251001',
+      activityLog: {
+        record: (input) => {
+          recorded.push({ ...input });
+          return Promise.resolve({
+            ...input,
+            id: 'fake',
+            timestamp: 1,
+          } as never);
+        },
+        list: () => Promise.resolve([]),
+        size: () => Promise.resolve(0),
+        clear: () => Promise.resolve(),
+      },
+      logger: { warn: () => {} },
+    });
+    await watcher.classifyNote('10-Inbox/foo.md');
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({
+      kind: 'classifier.ran',
+      outcome: 'keep',
+      model: 'claude-haiku-4-5-20251001',
+    });
+    expect(recorded[0]).not.toHaveProperty('confidence');
+  });
+
+  it('records error event when the classifier throws', async () => {
+    const harness = makeHarness({ classifierOutcomes: [new Error('rate limit')] });
+    const recorded: Array<{ kind: string; [k: string]: unknown }> = [];
+    const watcher = new OrganizationWatcher({
+      classifier: harness.classifier,
+      queue: harness.queue,
+      events: harness.events,
+      adapter: harness.adapter,
+      enabled: true,
+      watchedFolders: ['10-Inbox/'],
+      classifierModel: 'claude-sonnet-4-6',
+      activityLog: {
+        record: (input) => {
+          recorded.push({ ...input });
+          return Promise.resolve({
+            ...input,
+            id: 'fake',
+            timestamp: 1,
+          } as never);
+        },
+        list: () => Promise.resolve([]),
+        size: () => Promise.resolve(0),
+        clear: () => Promise.resolve(),
+      },
+      logger: { warn: () => {} },
+    });
+    const out = await watcher.classifyNote('10-Inbox/foo.md');
+    expect(out.skipped).toBe('classifier-error');
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]).toMatchObject({
+      kind: 'error',
+      source: 'classifier',
+    });
+  });
+});
+

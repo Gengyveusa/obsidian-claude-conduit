@@ -1,3 +1,4 @@
+import type { ActivityLog } from '../activity/ActivityLog';
 import type { VaultAdapter } from '../agent/types';
 
 import type { AppliedOp, Transaction } from './types';
@@ -50,6 +51,12 @@ export interface JsonTransactionLogOptions {
   now?: () => number;
   /** Injectable RNG for tests; must return 6 hex chars. */
   randId?: () => string;
+  /**
+   * Phase 6 (v0.8.0) — when supplied, every committed write op also emits
+   * a `write.committed` event for the activity stream. Optional so tests
+   * that don't care about activity can omit it.
+   */
+  activityLog?: ActivityLog;
 }
 
 const DEFAULT_MAX_ENTRIES = 1000;
@@ -60,6 +67,7 @@ export class JsonTransactionLog implements TransactionLog {
   private readonly maxEntries: number;
   private readonly now: () => number;
   private readonly randId: () => string;
+  private readonly activityLog?: ActivityLog;
 
   constructor(opts: JsonTransactionLogOptions) {
     this.adapter = opts.adapter;
@@ -67,6 +75,9 @@ export class JsonTransactionLog implements TransactionLog {
     this.maxEntries = opts.maxEntries ?? DEFAULT_MAX_ENTRIES;
     this.now = opts.now ?? Date.now;
     this.randId = opts.randId ?? defaultRandId;
+    if (opts.activityLog !== undefined) {
+      this.activityLog = opts.activityLog;
+    }
   }
 
   begin(sessionId?: string): TransactionBuilder {
@@ -138,6 +149,15 @@ export class JsonTransactionLog implements TransactionLog {
         ? existing.slice(existing.length - this.maxEntries)
         : existing;
     await this.adapter.write(this.path, JSON.stringify(trimmed, null, 2));
+    if (this.activityLog !== undefined) {
+      for (const op of tx.ops) {
+        await this.activityLog.record({
+          kind: 'write.committed',
+          toolName: op.toolName,
+          path: op.path,
+        });
+      }
+    }
   }
 
   private async loadAll(): Promise<Transaction[]> {
