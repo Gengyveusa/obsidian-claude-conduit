@@ -395,3 +395,111 @@
   color: var(--text-accent-hover);
   text-decoration: underline;
 }
+
+/* Phase 6 activity stream — ADR-019 D3 */
+.sagittarius-activity {
+  padding: 0.6em;
+}
+
+.sagittarius-activity-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  margin-bottom: 0.6em;
+}
+
+.sagittarius-activity-header h3 {
+  margin: 0;
+  flex-grow: 1;
+}
+
+.sagittarius-activity-count {
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+
+.sagittarius-activity-actions button {
+  font-size: 0.85em;
+  padding: 0.2em 0.6em;
+}
+
+.sagittarius-activity-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25em;
+  margin-bottom: 0.8em;
+}
+
+.sagittarius-activity-chip {
+  font-size: 0.8em;
+  padding: 0.2em 0.6em;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+}
+
+.sagittarius-activity-chip-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+.sagittarius-activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4em;
+}
+
+.sagittarius-activity-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 0.9em;
+}
+
+.sagittarius-activity-row {
+  padding: 0.4em 0.6em;
+  border-left: 3px solid var(--background-modifier-border);
+  background: var(--background-primary-alt);
+  border-radius: 3px;
+}
+
+.sagittarius-activity-row-clickable {
+  cursor: pointer;
+}
+
+.sagittarius-activity-row-clickable:hover {
+  background: var(--background-secondary);
+}
+
+.sagittarius-activity-row--error {
+  border-left-color: var(--text-error, #d9534f);
+}
+
+.sagittarius-activity-row--classifier-ran {
+  border-left-color: var(--text-accent, #7e57c2);
+}
+
+.sagittarius-activity-row--suggestion-applied {
+  border-left-color: var(--text-success, #4caf50);
+}
+
+.sagittarius-activity-row--write-committed {
+  border-left-color: var(--text-success, #4caf50);
+}
+
+.sagittarius-activity-meta {
+  display: flex;
+  gap: 0.6em;
+  font-size: 0.75em;
+  color: var(--text-muted);
+  margin-bottom: 0.15em;
+}
+
+.sagittarius-activity-kind {
+  font-weight: 600;
+}
+
+.sagittarius-activity-body {
+  font-size: 0.9em;
+  word-break: break-all;
+}
