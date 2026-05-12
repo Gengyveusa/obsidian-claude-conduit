@@ -172,8 +172,18 @@ export class SuggestionsView extends ItemView {
 
   private async handleApply(s: Suggestion): Promise<void> {
     if (s.kind === 'moc-add') {
-      // v0.6.0 only ships `route` apply per ADR-017 D6.
-      new Notice('Sagittarius: moc-add suggestions arrive in v0.6.x.');
+      // v0.6.x — apply routes through `link_notes` (gated by the Phase 4
+      // diff card). main.ts owns the actual tool invocation; the panel
+      // just translates the outcome to a Notice and refreshes itself.
+      const result = await this.plugin.applyMocAddSuggestion(s);
+      if (result === 'applied') {
+        new Notice(`Sagittarius: linked ${s.notePath} from ${s.mocPath}`);
+      } else if (result === 'rejected') {
+        new Notice('Sagittarius: rejected in diff card — suggestion removed.');
+      } else {
+        new Notice('Sagittarius: apply did not complete — see console.');
+      }
+      await this.refresh();
       return;
     }
     const result = await this.plugin.applyRouteSuggestion(s);

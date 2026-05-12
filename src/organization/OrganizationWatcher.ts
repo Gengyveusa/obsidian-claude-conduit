@@ -1,5 +1,7 @@
 import type { VaultAdapter } from '../agent/types';
 
+import type { MocAddClassifier } from './MocAddClassifier';
+import type { MocDiscovery } from './MocDiscovery';
 import type { OrganizationClassifier } from './OrganizationClassifier';
 import type { SuggestionQueue } from './SuggestionQueue';
 
@@ -43,6 +45,14 @@ export interface OrganizationWatcherDeps {
   queue: SuggestionQueue;
   events: VaultEventEmitter;
   adapter: VaultAdapter;
+  /**
+   * Optional v0.6.x moc-add pair. Both must be supplied to enable
+   * moc-add suggestions; if either is omitted, the watcher skips the
+   * moc-add code path silently. main.ts wires these only when the
+   * user has populated `organizationMocFolders` in settings.
+   */
+  mocAddClassifier?: MocAddClassifier;
+  mocDiscovery?: MocDiscovery;
   /** Initial config. `setEnabled` / `setWatchedFolders` can update at runtime. */
   enabled: boolean;
   watchedFolders: string[];
@@ -182,7 +192,11 @@ export class OrganizationWatcher {
     }
 
     if (outcome.suggestion === null) {
-      return { enqueued: false, skipped: 'classifier-said-keep' };
+      // Route classifier said KEEP. Try moc-add: maybe the note belongs
+      // on an existing MOC. Per ADR-017 D6, moc-add only runs in the
+      // KEEP branch — notes that are about to move don't need MOC
+      // membership computed yet (PR 3 v0.6.x integration).
+      return this.tryMocAdd(path);
     }
     if (outcome.suggestion.confidence < this.minConfidence) {
       // Still enqueue — the panel filters at display time so users can
@@ -190,6 +204,52 @@ export class OrganizationWatcher {
       // No special skip — the entry just won't be visible by default.
     }
     await this.deps.queue.add(outcome.suggestion);
+    return { enqueued: true };
+  }
+
+  /**
+   * v0.6.x extension — run the moc-add classifier on a note that the
+   * route classifier already decided to KEEP. Returns a `ClassifyOutcome`:
+   *
+   *   - `classifier-said-keep` when moc-add is not configured (either
+   *     dep missing or no MOC candidates discovered) OR the classifier
+   *     said NONE. This keeps the outcome vocabulary stable — callers
+   *     don't need to know whether moc-add was even attempted.
+   *   - `enqueued: true` when a moc-add suggestion was added.
+   *   - `classifier-error` when the moc-add classifier threw.
+   */
+  private async tryMocAdd(path: string): Promise<ClassifyOutcome> {
+    const mocClassifier = this.deps.mocAddClassifier;
+    const mocDiscovery = this.deps.mocDiscovery;
+    if (mocClassifier === undefined || mocDiscovery === undefined) {
+      return { enqueued: false, skipped: 'classifier-said-keep' };
+    }
+
+    let candidates;
+    try {
+      candidates = await mocDiscovery.discover();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`MOC discovery for ${path} failed: ${msg}`);
+      return { enqueued: false, skipped: 'classifier-error', error: msg };
+    }
+    if (candidates.length === 0) {
+      return { enqueued: false, skipped: 'classifier-said-keep' };
+    }
+
+    let mocOutcome;
+    try {
+      mocOutcome = await mocClassifier.classifyForMocAdd(path, candidates);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`moc-add classify ${path} failed: ${msg}`);
+      return { enqueued: false, skipped: 'classifier-error', error: msg };
+    }
+
+    if (mocOutcome.suggestion === null) {
+      return { enqueued: false, skipped: 'classifier-said-keep' };
+    }
+    await this.deps.queue.add(mocOutcome.suggestion);
     return { enqueued: true };
   }
 

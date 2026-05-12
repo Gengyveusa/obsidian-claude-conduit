@@ -6,7 +6,7 @@ This file orients a Claude Code session opened against this repo. Substrate ques
 
 - **Name:** Sagittarius — Claude Conduit (`obsidian-claude-conduit`)
 - **What:** Native Obsidian plugin. Chat with your vault, retrieval-grounded.
-- **Status:** v0.6.0 — **Phase 5 (Organization Engine) MVP shipped.** Opt-in proactive watcher on `10-Inbox/` (configurable). New `Sagittarius — Suggestions` side panel with Apply/Skip/Defer per row. `Sagittarius: organize inbox now` command for manual sweeps. Sonnet classifier per ADR-017 D4 (with Haiku/Opus dropdown). Apply still routes through the Phase 4 diff card so every actual file change is gated. Next: v0.6.x adds `moc-add` suggestions; v0.7.0 closes Phase 5 with bulk ops + background sweep.
+- **Status:** v0.6.2 — Phase 5 organization engine extended with `moc-add` suggestions. After a route classifier says KEEP, the watcher consults a second classifier that asks whether the note belongs on any existing Map-of-Content note (shape-detected in `organizationMocFolders`). Apply routes through `link_notes` — diff card still gates. Settings adds "MOC folders" text field. Next: v0.7.0 closes Phase 5 with bulk ops + background sweep + Phase 5 retrospective ADR.
 - **Build pattern:** `pair-via-claude-code` per [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) (ADR-010). Thad decides; Claude implements.
 
 ## Read first (in this order)

@@ -35,13 +35,15 @@ import { RetrievalLayer } from './retrieval/RetrievalLayer';
 import type { SqliteEngine } from './retrieval/SqliteEngine';
 import { SagittariusSettingTab } from './settings/SagittariusSettingTab';
 import { DEFAULT_SETTINGS, type SagittariusSettings } from './settings/types';
+import { MocAddClassifier } from './organization/MocAddClassifier';
+import { MocDiscovery } from './organization/MocDiscovery';
 import { OrganizationClassifier } from './organization/OrganizationClassifier';
 import {
   OrganizationWatcher,
   type VaultEventEmitter,
 } from './organization/OrganizationWatcher';
 import { JsonSuggestionQueue, type SuggestionQueue } from './organization/SuggestionQueue';
-import type { RouteSuggestion } from './organization/types';
+import type { MocAddSuggestion, RouteSuggestion } from './organization/types';
 import { ChatView, CHAT_VIEW_TYPE } from './views/ChatView';
 import { QuickQuestionModal } from './views/QuickQuestionModal';
 import { SuggestionsView, SUGGESTIONS_VIEW_TYPE, destinationPathFor } from './views/SuggestionsView';
@@ -410,6 +412,69 @@ export default class SagittariusPlugin extends Plugin {
     }
   }
 
+  /**
+   * v0.6.x — apply a moc-add suggestion by reading the MOC's current
+   * state, then invoking the registered `link_notes` tool (Phase 4
+   * diff card still gates the actual write). On accept, removes the
+   * suggestion from the queue. On reject, also removes. On error/
+   * conflict, leaves in queue so the user can retry.
+   */
+  async applyMocAddSuggestion(
+    s: MocAddSuggestion,
+  ): Promise<'applied' | 'rejected' | 'error'> {
+    if (this.suggestionQueue === null) {
+      new Notice('Sagittarius: organization engine is off.');
+      return 'error';
+    }
+    const bundle = await this.getAgentBundle();
+    if (bundle === null) {
+      new Notice('Sagittarius: set your Anthropic API key first.');
+      return 'error';
+    }
+    try {
+      // link_notes requires expectedMtime + expectedHash to detect
+      // concurrent edits per ADR-016 D4. Easiest source of both: ask
+      // the read_note tool, which already returns these fields.
+      const readResult = (await bundle.deps.tools.execute('read_note', {
+        path: s.mocPath,
+      })) as { mtime: number; hash: string } | null;
+      if (readResult === null) {
+        new Notice(`Sagittarius: MOC not found at ${s.mocPath}.`);
+        return 'error';
+      }
+
+      const linkArgs: Record<string, unknown> = {
+        fromPath: s.mocPath,
+        toPath: s.notePath,
+        expectedMtime: readResult.mtime,
+        expectedHash: readResult.hash,
+      };
+      if (s.mocAnchor !== undefined) {
+        linkArgs.anchorInFrom = s.mocAnchor;
+      }
+
+      const result = (await bundle.deps.tools.execute('link_notes', linkArgs)) as {
+        status: string;
+        error?: string;
+        reason?: string;
+      };
+      if (result.status === 'applied') {
+        await this.suggestionQueue.remove(s.id);
+        return 'applied';
+      }
+      if (result.status === 'rejected') {
+        await this.suggestionQueue.remove(s.id);
+        return 'rejected';
+      }
+      console.warn(`[sagittarius] apply moc-add failed: ${result.error ?? result.reason ?? ''}`);
+      return 'error';
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[sagittarius] apply moc-add threw: ${msg}`);
+      return 'error';
+    }
+  }
+
   /** Re-render the SuggestionsView if it's open. */
   async refreshSuggestionsView(): Promise<void> {
     for (const leaf of this.app.workspace.getLeavesOfType(SUGGESTIONS_VIEW_TYPE)) {
@@ -476,6 +541,23 @@ export default class SagittariusPlugin extends Plugin {
       constitution: bundle.deps.systemPromptParts.constitution,
       classifierModel: this.settings.organizationClassifierModel,
     });
+
+    // v0.6.x — moc-add classifier + discovery (only when user populated
+    // organizationMocFolders; empty array disables moc-add silently).
+    let mocAddClassifier: MocAddClassifier | undefined;
+    let mocDiscovery: MocDiscovery | undefined;
+    if (this.settings.organizationMocFolders.length > 0) {
+      mocAddClassifier = new MocAddClassifier({
+        adapter,
+        messages: bundle.deps.messages,
+        constitution: bundle.deps.systemPromptParts.constitution,
+        classifierModel: this.settings.organizationClassifierModel,
+      });
+      mocDiscovery = new MocDiscovery({
+        adapter,
+        mocFolders: this.settings.organizationMocFolders,
+      });
+    }
     const events: VaultEventEmitter = {
       onCreate: (handler) => {
         const cb = (...args: unknown[]): void => {
@@ -515,6 +597,11 @@ export default class SagittariusPlugin extends Plugin {
       enabled: true,
       watchedFolders: this.settings.organizationWatchedFolders,
       minConfidence: this.settings.organizationMinConfidence,
+      ...(mocAddClassifier !== undefined &&
+        mocDiscovery !== undefined && {
+          mocAddClassifier,
+          mocDiscovery,
+        }),
     });
     this.organizationWatcher.start();
     await this.refreshSuggestionsView();

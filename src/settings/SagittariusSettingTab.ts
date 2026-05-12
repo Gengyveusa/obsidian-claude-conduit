@@ -121,6 +121,25 @@ export class SagittariusSettingTab extends PluginSettingTab {
             this.plugin.refreshOrganizationEngine();
           }),
       );
+
+    new Setting(parent)
+      .setName('MOC folders (v0.6.x)')
+      .setDesc(
+        'Comma-separated folders where Map-of-Content notes live (e.g. "22-Decisions/, 30-Gengyve-GTM/"). When non-empty, Sagittarius proposes adding inbox notes to a matching MOC via `link_notes` (still gated by the diff card). Empty = moc-add disabled.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('22-Decisions/')
+          .setValue(this.plugin.settings.organizationMocFolders.join(', '))
+          .onChange(async (value) => {
+            this.plugin.settings.organizationMocFolders = value
+              .split(',')
+              .map((s) => s.trim())
+              .filter((s) => s.length > 0);
+            await this.plugin.saveSettings();
+            this.plugin.refreshOrganizationEngine();
+          }),
+      );
   }
 
   private renderWriteLayerSection(parent: HTMLElement): void {
