@@ -6,22 +6,24 @@ This file orients a Claude Code session opened against this repo. Substrate ques
 
 - **Name:** Sagittarius — Claude Conduit (`obsidian-claude-conduit`)
 - **What:** Native Obsidian plugin. Chat with your vault, retrieval-grounded.
-- **Status:** v0.6.2 — Phase 5 organization engine extended with `moc-add` suggestions. After a route classifier says KEEP, the watcher consults a second classifier that asks whether the note belongs on any existing Map-of-Content note (shape-detected in `organizationMocFolders`). Apply routes through `link_notes` — diff card still gates. Settings adds "MOC folders" text field. Next: v0.7.0 closes Phase 5 with bulk ops + background sweep + Phase 5 retrospective ADR.
+- **Status:** v0.7.0 — Phase 5 organization engine closed. Background sweep (`organizationSweepIntervalSec`) + bulk Apply-all / Skip-all in the panel + status bar pill (`✦ N suggestions`) + numeric-field validation feedback. Retrospective in ADR-018. Next: Phase 6 (Activity Stream + MCP bridge) — needs its own ADR before any code.
 - **Build pattern:** `pair-via-claude-code` per [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) (ADR-010). Thad decides; Claude implements.
 
 ## Read first (in this order)
 
-1. [`docs/2026-05-10-adr-016-phase-4-plan.md`](docs/2026-05-10-adr-016-phase-4-plan.md) — ADR-016, Phase 4 plan (read this first; D1-D6 + prereqs).
-2. [`docs/2026-05-09-phase-3-close.md`](docs/2026-05-09-phase-3-close.md) — ADR-014, Phase 3 retrospective.
-3. [`docs/2026-05-10-adr-015-vault-adapter-audit.md`](docs/2026-05-10-adr-015-vault-adapter-audit.md) — ADR-015, VaultAdapter audit findings + Phase 4 prereqs.
-4. [`docs/02_SPEC.md`](docs/02_SPEC.md) — v0.1 spec (binding).
-5. [`docs/03_PACKAGE_JSON.md`](docs/03_PACKAGE_JSON.md) — dependency rationale.
-6. [`docs/04_MANIFEST_JSON.md`](docs/04_MANIFEST_JSON.md) — Obsidian manifest fields.
-7. [`docs/05_CONDUIT_AGENT_SKETCH.md`](docs/05_CONDUIT_AGENT_SKETCH.md) — agent class shape.
-8. [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) — ADR-010 (process).
-9. [`docs/embed_interface.md`](docs/embed_interface.md) — embedding contract v1 (shared with corpus-ingest).
-10. [`docs/THAD_MAN.md`](docs/THAD_MAN.md) — vault constitution; loaded into the agent's system prompt at runtime.
-11. [`docs/concierge.md`](docs/concierge.md) — Hangar voice; loaded into the agent's system prompt.
+1. [`docs/2026-05-12-phase-5-close.md`](docs/2026-05-12-phase-5-close.md) — ADR-018, Phase 5 retrospective (read this first; three lessons + Phase 6 follow-ups).
+2. [`docs/2026-05-11-adr-017-phase-5-plan.md`](docs/2026-05-11-adr-017-phase-5-plan.md) — ADR-017, Phase 5 plan.
+3. [`docs/2026-05-10-adr-016-phase-4-plan.md`](docs/2026-05-10-adr-016-phase-4-plan.md) — ADR-016, Phase 4 plan (D1-D6 + prereqs).
+4. [`docs/2026-05-09-phase-3-close.md`](docs/2026-05-09-phase-3-close.md) — ADR-014, Phase 3 retrospective.
+5. [`docs/2026-05-10-adr-015-vault-adapter-audit.md`](docs/2026-05-10-adr-015-vault-adapter-audit.md) — ADR-015, VaultAdapter audit findings + Phase 4 prereqs.
+6. [`docs/02_SPEC.md`](docs/02_SPEC.md) — v0.1 spec (binding).
+7. [`docs/03_PACKAGE_JSON.md`](docs/03_PACKAGE_JSON.md) — dependency rationale.
+8. [`docs/04_MANIFEST_JSON.md`](docs/04_MANIFEST_JSON.md) — Obsidian manifest fields.
+9. [`docs/05_CONDUIT_AGENT_SKETCH.md`](docs/05_CONDUIT_AGENT_SKETCH.md) — agent class shape.
+10. [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) — ADR-010 (process).
+11. [`docs/embed_interface.md`](docs/embed_interface.md) — embedding contract v1 (shared with corpus-ingest).
+12. [`docs/THAD_MAN.md`](docs/THAD_MAN.md) — vault constitution; loaded into the agent's system prompt at runtime.
+13. [`docs/concierge.md`](docs/concierge.md) — Hangar voice; loaded into the agent's system prompt.
 
 ## Decision authority hierarchy
 
@@ -54,7 +56,7 @@ When unsure (per ADR-010 §4):
 | 2 — Scaffold | esbuild, manifest, plugin entry | done |
 | 3 — Read layer | side panel, retrieval, tools, budget — **= v0.1 ship (shipped as v0.2.3)** | done |
 | 4 — Write layer | diff-first writes, transaction log, undo | **done (v0.3.0 MVP → v0.5.0 close; ADR-016)** |
-| 5 — Organization engine | auto-routing, MOC maintenance | in progress (v0.6.0 MVP shipped; v0.7.0 = close; ADR-017) |
+| 5 — Organization engine | auto-routing, MOC maintenance | done (v0.6.0 MVP → v0.7.0 close; ADR-017, ADR-018) |
 | 6 — Activity stream + MCP bridge | events, alerts, digest | future |
 | 7 — Curator | proactive suggestions | future |
 | 8 — Generative layer | cited drafts, proposal quarantine | future |
