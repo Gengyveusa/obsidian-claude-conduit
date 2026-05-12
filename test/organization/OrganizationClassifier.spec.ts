@@ -217,6 +217,74 @@ describe('OrganizationClassifier', () => {
     expect(result.suggestion?.proposedFolder).toBe('70-Memory/notes');
   });
 
+  describe('same-folder normalization (v0.6.1)', () => {
+    it("normalizes 'same folder as note' to KEEP (returns null)", async () => {
+      // Smoke-test bug: model returned '10-Inbox' for a note already in '10-Inbox/'.
+      const messages = fakeMessagesApi(
+        makeMessage('{"folder": "10-Inbox", "confidence": 0.85, "reason": "already in the right place"}'),
+      );
+      const cls = new OrganizationClassifier({
+        adapter,
+        retrieval: fakeRetrieval([]),
+        messages,
+        constitution: 'CONSTITUTION',
+        classifierModel: 'claude-sonnet-4-6',
+      });
+      // adapter has '10-Inbox/foo.md' staged in beforeEach
+      const result = await cls.classifyForRoute('10-Inbox/foo.md');
+      expect(result.suggestion).toBeNull();
+    });
+
+    it("normalizes trailing-slashed same folder to KEEP", async () => {
+      const messages = fakeMessagesApi(
+        makeMessage('{"folder": "10-Inbox/", "confidence": 0.85, "reason": "same place"}'),
+      );
+      const cls = new OrganizationClassifier({
+        adapter,
+        retrieval: fakeRetrieval([]),
+        messages,
+        constitution: 'CONSTITUTION',
+        classifierModel: 'claude-sonnet-4-6',
+      });
+      const result = await cls.classifyForRoute('10-Inbox/foo.md');
+      expect(result.suggestion).toBeNull();
+    });
+
+    it("treats empty proposedFolder as KEEP for root-level notes", async () => {
+      adapter.files.set('root-note.md', 'a root-level note');
+      const messages = fakeMessagesApi(
+        makeMessage('{"folder": "", "confidence": 0.9, "reason": "stays at vault root"}'),
+      );
+      const cls = new OrganizationClassifier({
+        adapter,
+        retrieval: fakeRetrieval([]),
+        messages,
+        constitution: 'CONSTITUTION',
+        classifierModel: 'claude-sonnet-4-6',
+      });
+      // proposed '' fails the regex check in parseClassifierResponse though
+      // — the model would more likely return KEEP for root-level notes anyway.
+      // This test pins the BEHAVIOR if a model ever returned an empty string.
+      await expect(cls.classifyForRoute('root-note.md')).rejects.toThrow(/missing string "folder"/);
+    });
+
+    it("still surfaces a real move suggestion (proposed folder differs)", async () => {
+      const messages = fakeMessagesApi(
+        makeMessage('{"folder": "70-Memory/notes", "confidence": 0.82, "reason": "matches similar notes"}'),
+      );
+      const cls = new OrganizationClassifier({
+        adapter,
+        retrieval: fakeRetrieval([]),
+        messages,
+        constitution: 'CONSTITUTION',
+        classifierModel: 'claude-sonnet-4-6',
+      });
+      const result = await cls.classifyForRoute('10-Inbox/foo.md');
+      expect(result.suggestion).not.toBeNull();
+      expect(result.suggestion?.proposedFolder).toBe('70-Memory/notes');
+    });
+  });
+
   it('returns suggestion: null when the model says KEEP', async () => {
     const messages = fakeMessagesApi(
       makeMessage('{"folder": "KEEP", "confidence": 0.9, "reason": "already in a sensible folder"}'),

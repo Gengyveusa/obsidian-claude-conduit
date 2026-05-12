@@ -140,13 +140,29 @@ export class OrganizationClassifier {
       };
     }
 
+    // v0.6.1 fix — defense against classifiers that emit the note's
+    // current folder as a "move." Observed in smoke-test: model said
+    // "10-Inbox is the correct home" in its reason yet returned
+    // proposedFolder: "10-Inbox" (the current folder) instead of KEEP.
+    // Normalize to KEEP here so the queue + UI never see a no-op
+    // suggestion that would fail at apply with the same-path guard.
+    const proposedFolder = stripTrailingSlash(parsed.folder);
+    if (proposedFolder === currentFolderOf(notePath)) {
+      return {
+        suggestion: null,
+        tokensIn: response.usage.input_tokens,
+        tokensOut: response.usage.output_tokens,
+        rawResponse: rawText,
+      };
+    }
+
     const id = `${this.now()}-${this.randId()}`;
     const suggestion: RouteSuggestion = {
       kind: 'route',
       id,
       createdAt: Math.floor(this.now() / 1000),
       notePath,
-      proposedFolder: stripTrailingSlash(parsed.folder),
+      proposedFolder,
       reason: parsed.reason,
       confidence: parsed.confidence,
     };
@@ -202,10 +218,21 @@ function stripTrailingSlash(s: string): string {
   return s.endsWith('/') ? s.slice(0, -1) : s;
 }
 
-/** Get the parent folder of a vault-relative path (or '' for root files). */
+/** Get the parent folder of a vault-relative path. Returns '(root)' for root-level files (used in the prompt for human readability). */
 function folderOf(path: string): string {
   const lastSlash = path.lastIndexOf('/');
   return lastSlash === -1 ? '(root)' : path.slice(0, lastSlash);
+}
+
+/**
+ * Same as `folderOf` but returns `''` for root files — used to compare against
+ * the model's `proposedFolder` (which would also be `''` for "leave at root").
+ * v0.6.1: this is the basis of the same-folder normalization in
+ * `classifyForRoute`.
+ */
+function currentFolderOf(path: string): string {
+  const lastSlash = path.lastIndexOf('/');
+  return lastSlash === -1 ? '' : path.slice(0, lastSlash);
 }
 
 /** 6 hex chars for the suggestion id suffix. Mirrors TransactionLog. */
