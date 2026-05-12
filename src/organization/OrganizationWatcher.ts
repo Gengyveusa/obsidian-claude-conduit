@@ -1,3 +1,4 @@
+import type { ActivityLog } from '../activity/ActivityLog';
 import type { VaultAdapter } from '../agent/types';
 
 import type { MocAddClassifier } from './MocAddClassifier';
@@ -64,6 +65,20 @@ export interface OrganizationWatcherDeps {
   setTimeoutImpl?: (cb: () => void, ms: number) => unknown;
   clearTimeoutImpl?: (handle: unknown) => void;
   logger?: { warn: (msg: string) => void };
+  /**
+   * Phase 6 (v0.8.0) — when supplied, the watcher emits `classifier.ran`,
+   * `suggestion.enqueued`, and `error` events. Optional so existing tests
+   * (and any harness not using the activity stream) keep working.
+   */
+  activityLog?: ActivityLog;
+  /**
+   * Model id the route classifier targets. Surfaced in `classifier.ran`
+   * events so the activity view can show "Sonnet vs Haiku" at a glance.
+   * The watcher doesn't otherwise care which model is in use.
+   */
+  classifierModel?: string;
+  /** Test-injectable clock (epoch ms). Default Date.now. */
+  now?: () => number;
 }
 
 export interface ClassifyOutcome {
@@ -96,6 +111,8 @@ export class OrganizationWatcher {
   private readonly setTimeoutImpl: (cb: () => void, ms: number) => unknown;
   private readonly clearTimeoutImpl: (handle: unknown) => void;
   private readonly logger: { warn: (msg: string) => void };
+  private readonly clock: () => number;
+  private readonly classifierModel: string;
 
   /** Active debounce timers keyed by path. Cleared when classification fires. */
   private readonly pendingTimers = new Map<string, unknown>();
@@ -113,6 +130,8 @@ export class OrganizationWatcher {
         clearTimeout(handle as ReturnType<typeof setTimeout>);
       });
     this.logger = deps.logger ?? { warn: (msg) => console.warn(`[org-watcher] ${msg}`) };
+    this.clock = deps.now ?? (() => Date.now());
+    this.classifierModel = deps.classifierModel ?? 'unknown';
   }
 
   /** Subscribe to vault events. Idempotent — calling start twice is safe. */
@@ -182,14 +201,29 @@ export class OrganizationWatcher {
       return { enqueued: false, skipped: 'already-in-queue' };
     }
 
+    const t0 = this.clock();
     let outcome;
     try {
       outcome = await this.deps.classifier.classifyForRoute(path);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.warn(`classify ${path} failed: ${msg}`);
+      await this.deps.activityLog?.record({
+        kind: 'error',
+        source: 'classifier',
+        message: `classify ${path} failed: ${msg}`,
+      });
       return { enqueued: false, skipped: 'classifier-error', error: msg };
     }
+
+    await this.deps.activityLog?.record({
+      kind: 'classifier.ran',
+      notePath: path,
+      model: this.classifierModel,
+      outcome: outcome.suggestion === null ? 'keep' : 'route',
+      ...(outcome.suggestion !== null && { confidence: outcome.suggestion.confidence }),
+      durationMs: this.clock() - t0,
+    });
 
     if (outcome.suggestion === null) {
       // Route classifier said KEEP. Try moc-add: maybe the note belongs
@@ -204,6 +238,14 @@ export class OrganizationWatcher {
       // No special skip — the entry just won't be visible by default.
     }
     await this.deps.queue.add(outcome.suggestion);
+    await this.deps.activityLog?.record({
+      kind: 'suggestion.enqueued',
+      suggestionId: outcome.suggestion.id,
+      suggestionKind: 'route',
+      notePath: outcome.suggestion.notePath,
+      target: outcome.suggestion.proposedFolder,
+      confidence: outcome.suggestion.confidence,
+    });
     return { enqueued: true };
   }
 
@@ -237,19 +279,44 @@ export class OrganizationWatcher {
       return { enqueued: false, skipped: 'classifier-said-keep' };
     }
 
+    const t0 = this.clock();
     let mocOutcome;
     try {
       mocOutcome = await mocClassifier.classifyForMocAdd(path, candidates);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.warn(`moc-add classify ${path} failed: ${msg}`);
+      await this.deps.activityLog?.record({
+        kind: 'error',
+        source: 'classifier',
+        message: `moc-add classify ${path} failed: ${msg}`,
+      });
       return { enqueued: false, skipped: 'classifier-error', error: msg };
     }
+
+    await this.deps.activityLog?.record({
+      kind: 'classifier.ran',
+      notePath: path,
+      model: this.classifierModel,
+      outcome: mocOutcome.suggestion === null ? 'null' : 'moc-add',
+      ...(mocOutcome.suggestion !== null && {
+        confidence: mocOutcome.suggestion.confidence,
+      }),
+      durationMs: this.clock() - t0,
+    });
 
     if (mocOutcome.suggestion === null) {
       return { enqueued: false, skipped: 'classifier-said-keep' };
     }
     await this.deps.queue.add(mocOutcome.suggestion);
+    await this.deps.activityLog?.record({
+      kind: 'suggestion.enqueued',
+      suggestionId: mocOutcome.suggestion.id,
+      suggestionKind: 'moc-add',
+      notePath: mocOutcome.suggestion.notePath,
+      target: mocOutcome.suggestion.mocPath,
+      confidence: mocOutcome.suggestion.confidence,
+    });
     return { enqueued: true };
   }
 

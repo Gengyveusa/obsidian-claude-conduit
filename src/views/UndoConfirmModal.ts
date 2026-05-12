@@ -1,5 +1,6 @@
 import { type App, Modal, Notice } from 'obsidian';
 
+import type { ActivityLog } from '../activity/ActivityLog';
 import type { TransactionReplayer, UndoResult } from '../writes/TransactionReplayer';
 import type { Transaction } from '../writes/types';
 
@@ -23,6 +24,7 @@ export class UndoConfirmModal extends Modal {
     app: App,
     private readonly preview: Transaction,
     private readonly replayer: TransactionReplayer,
+    private readonly activityLog: ActivityLog | null = null,
   ) {
     super(app);
   }
@@ -90,6 +92,12 @@ export class UndoConfirmModal extends Modal {
       new Notice(
         `Sagittarius: undid ${result.outcomes.length} op(s) and removed the transaction from the log.`,
       );
+      if (this.activityLog !== null) {
+        await this.activityLog.record({
+          kind: 'write.undone',
+          transactionId: result.transaction.id,
+        });
+      }
     } else {
       const failedOutcome = result.outcomes.find((o) => !o.ok);
       const successCount = result.outcomes.filter((o) => o.ok).length;

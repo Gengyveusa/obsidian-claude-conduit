@@ -33,6 +33,7 @@ import { makeObsidianRequestUrlNativeFetch } from './retrieval/obsidianRequestUr
 import { openSqliteEngine } from './retrieval/openEngine';
 import { RetrievalLayer } from './retrieval/RetrievalLayer';
 import type { SqliteEngine } from './retrieval/SqliteEngine';
+import { JsonActivityLog, type ActivityLog } from './activity/ActivityLog';
 import { SagittariusSettingTab } from './settings/SagittariusSettingTab';
 import { DEFAULT_SETTINGS, type SagittariusSettings } from './settings/types';
 import { MocAddClassifier } from './organization/MocAddClassifier';
@@ -60,6 +61,7 @@ const HANGAR_VOICE_PATH = '21-Agents/concierge.md';
 const INDEX_DB_PATH = '.obsidian/plugins/obsidian-claude-conduit/index.sqlite';
 const TX_LOG_PATH = '.obsidian/plugins/obsidian-claude-conduit/transactions.json';
 const SUGGESTIONS_PATH = '.obsidian/plugins/obsidian-claude-conduit/suggestions.json';
+const ACTIVITY_LOG_PATH = '.obsidian/plugins/obsidian-claude-conduit/activity.json';
 
 interface AgentBundle {
   agent: ConduitAgent;
@@ -95,6 +97,12 @@ export default class SagittariusPlugin extends Plugin {
    * SuggestionsView can render an empty-state with a helpful nudge.
    */
   suggestionQueue: SuggestionQueue | null = null;
+  /**
+   * Phase 6 (v0.8.0) activity stream. Constructed in `onload` (always),
+   * consumed by every subsystem that wants to emit. Exposed so the
+   * SuggestionsView can record `suggestion.skipped` events directly.
+   */
+  activityLog: ActivityLog | null = null;
   private organizationWatcher: OrganizationWatcher | null = null;
   private organizationSweepHandle: number | null = null;
   private organizationStatusBarEl: HTMLElement | null = null;
@@ -106,6 +114,15 @@ export default class SagittariusPlugin extends Plugin {
   override async onload(): Promise<void> {
     await this.loadSettings();
     this.addSettingTab(new SagittariusSettingTab(this.app, this));
+
+    // Phase 6 (v0.8.0): activity stream — constructed early so every
+    // subsystem that wires it in (TransactionLog, OrganizationWatcher,
+    // apply/undo/index paths) can pass it through. Persistent JSON log
+    // capped at 1000 entries per ADR-019 D4.
+    this.activityLog = new JsonActivityLog({
+      adapter: new VaultAdapterImpl(this.app),
+      path: ACTIVITY_LOG_PATH,
+    });
 
     this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
     this.registerView(
@@ -341,7 +358,11 @@ export default class SagittariusPlugin extends Plugin {
    */
   private async runUndoLastWrite(): Promise<void> {
     const adapter = new VaultAdapterImpl(this.app);
-    const txLog = new JsonTransactionLog({ adapter, path: TX_LOG_PATH });
+    const txLog = new JsonTransactionLog({
+      adapter,
+      path: TX_LOG_PATH,
+      ...(this.activityLog !== null && { activityLog: this.activityLog }),
+    });
     const replayer = new TransactionReplayer({ adapter, log: txLog });
 
     const preview = await replayer.peekLast();
@@ -350,7 +371,7 @@ export default class SagittariusPlugin extends Plugin {
       return;
     }
 
-    new UndoConfirmModal(this.app, preview, replayer).open();
+    new UndoConfirmModal(this.app, preview, replayer, this.activityLog).open();
   }
 
   // ─── Phase 5 organization engine ──────────────────────────────────
@@ -421,18 +442,40 @@ export default class SagittariusPlugin extends Plugin {
       })) as { status: string; error?: string; reason?: string };
       if (result.status === 'applied') {
         await this.suggestionQueue.remove(s.id);
+        await this.activityLog?.record({
+          kind: 'suggestion.applied',
+          suggestionId: s.id,
+          suggestionKind: 'route',
+          notePath: s.notePath,
+          writeToolName: 'move_note',
+        });
         return 'applied';
       }
       if (result.status === 'rejected') {
         await this.suggestionQueue.remove(s.id);
+        await this.activityLog?.record({
+          kind: 'suggestion.rejected',
+          suggestionId: s.id,
+          notePath: s.notePath,
+        });
         return 'rejected';
       }
       // error / conflict
       console.warn(`[sagittarius] apply route failed: ${result.error ?? result.reason ?? ''}`);
+      await this.activityLog?.record({
+        kind: 'error',
+        source: 'apply-route',
+        message: result.error ?? result.reason ?? 'unknown',
+      });
       return 'error';
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[sagittarius] apply route threw: ${msg}`);
+      await this.activityLog?.record({
+        kind: 'error',
+        source: 'apply-route',
+        message: msg,
+      });
       return 'error';
     }
   }
@@ -485,17 +528,39 @@ export default class SagittariusPlugin extends Plugin {
       };
       if (result.status === 'applied') {
         await this.suggestionQueue.remove(s.id);
+        await this.activityLog?.record({
+          kind: 'suggestion.applied',
+          suggestionId: s.id,
+          suggestionKind: 'moc-add',
+          notePath: s.notePath,
+          writeToolName: 'link_notes',
+        });
         return 'applied';
       }
       if (result.status === 'rejected') {
         await this.suggestionQueue.remove(s.id);
+        await this.activityLog?.record({
+          kind: 'suggestion.rejected',
+          suggestionId: s.id,
+          notePath: s.notePath,
+        });
         return 'rejected';
       }
       console.warn(`[sagittarius] apply moc-add failed: ${result.error ?? result.reason ?? ''}`);
+      await this.activityLog?.record({
+        kind: 'error',
+        source: 'apply-moc-add',
+        message: result.error ?? result.reason ?? 'unknown',
+      });
       return 'error';
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`[sagittarius] apply moc-add threw: ${msg}`);
+      await this.activityLog?.record({
+        kind: 'error',
+        source: 'apply-moc-add',
+        message: msg,
+      });
       return 'error';
     }
   }
@@ -659,6 +724,8 @@ export default class SagittariusPlugin extends Plugin {
       enabled: true,
       watchedFolders: this.settings.organizationWatchedFolders,
       minConfidence: this.settings.organizationMinConfidence,
+      classifierModel: this.settings.organizationClassifierModel,
+      ...(this.activityLog !== null && { activityLog: this.activityLog }),
       ...(mocAddClassifier !== undefined &&
         mocDiscovery !== undefined && {
           mocAddClassifier,
@@ -726,9 +793,21 @@ export default class SagittariusPlugin extends Plugin {
         `[sagittarius] auto-index: ${result.notesProcessed} notes, ${result.chunksAdded} chunks, ` +
           `${result.chunksSkipped} skipped, ${result.durationMs}ms.`,
       );
+      await this.activityLog?.record({
+        kind: 'index.built',
+        notesProcessed: result.notesProcessed,
+        chunksAdded: result.chunksAdded,
+        chunksSkipped: result.chunksSkipped,
+        durationMs: result.durationMs,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[sagittarius] auto-index FAILED: ${msg}`);
+      await this.activityLog?.record({
+        kind: 'error',
+        source: 'auto-index',
+        message: msg,
+      });
     }
   }
 
@@ -795,6 +874,7 @@ export default class SagittariusPlugin extends Plugin {
     const txLog = new JsonTransactionLog({
       adapter,
       path: TX_LOG_PATH,
+      ...(this.activityLog !== null && { activityLog: this.activityLog }),
     });
     const writeCtx = new WriteToolContext(txLog);
 
