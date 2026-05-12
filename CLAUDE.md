@@ -6,7 +6,7 @@ This file orients a Claude Code session opened against this repo. Substrate ques
 
 - **Name:** Sagittarius — Claude Conduit (`obsidian-claude-conduit`)
 - **What:** Native Obsidian plugin. Chat with your vault, retrieval-grounded.
-- **Status:** v0.5.0 — **Phase 4 (Write Layer) complete.** Final tool `file_asset` (binary attachments via base64) + `writeMode` settings field + `defaultAttachmentsFolder` settings field. All 9 write tools from ADR-016 D6 are shipped. Next: Phase 5 (Organization Engine) per the phase map below. v1.0 = community release.
+- **Status:** v0.6.0 — **Phase 5 (Organization Engine) MVP shipped.** Opt-in proactive watcher on `10-Inbox/` (configurable). New `Sagittarius — Suggestions` side panel with Apply/Skip/Defer per row. `Sagittarius: organize inbox now` command for manual sweeps. Sonnet classifier per ADR-017 D4 (with Haiku/Opus dropdown). Apply still routes through the Phase 4 diff card so every actual file change is gated. Next: v0.6.x adds `moc-add` suggestions; v0.7.0 closes Phase 5 with bulk ops + background sweep.
 - **Build pattern:** `pair-via-claude-code` per [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) (ADR-010). Thad decides; Claude implements.
 
 ## Read first (in this order)
@@ -54,7 +54,7 @@ When unsure (per ADR-010 §4):
 | 2 — Scaffold | esbuild, manifest, plugin entry | done |
 | 3 — Read layer | side panel, retrieval, tools, budget — **= v0.1 ship (shipped as v0.2.3)** | done |
 | 4 — Write layer | diff-first writes, transaction log, undo | **done (v0.3.0 MVP → v0.5.0 close; ADR-016)** |
-| 5 — Organization engine | auto-routing, MOC maintenance — **= v0.5** | future |
+| 5 — Organization engine | auto-routing, MOC maintenance | in progress (v0.6.0 MVP shipped; v0.7.0 = close; ADR-017) |
 | 6 — Activity stream + MCP bridge | events, alerts, digest | future |
 | 7 — Curator | proactive suggestions | future |
 | 8 — Generative layer | cited drafts, proposal quarantine | future |

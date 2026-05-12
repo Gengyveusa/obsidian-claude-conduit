@@ -1,0 +1,227 @@
+import { ItemView, Notice, type WorkspaceLeaf } from 'obsidian';
+
+import type SagittariusPlugin from '../main';
+import type { Suggestion, RouteSuggestion } from '../organization/types';
+
+export const SUGGESTIONS_VIEW_TYPE = 'sagittarius-suggestions';
+
+/**
+ * Phase 5 (v0.6.0) — proactive suggestions panel per [ADR-017](../../docs/2026-05-11-adr-017-phase-5-plan.md) D2.
+ *
+ * Renders the rows in the plugin's `SuggestionQueue` with Apply / Skip /
+ * Defer buttons. Apply routes through the existing Phase 4 write tools
+ * (so the diff card still gates every actual file change). Skip and
+ * Defer mutate the queue directly.
+ *
+ * Re-render policy: explicit refresh on every user action + on
+ * `onOpen()`. The plugin's `refreshSuggestionsView()` hook also triggers
+ * a re-render when the watcher enqueues new suggestions.
+ */
+export class SuggestionsView extends ItemView {
+  private listEl!: HTMLElement;
+  private headerCountEl!: HTMLElement;
+
+  constructor(
+    leaf: WorkspaceLeaf,
+    private readonly plugin: SagittariusPlugin,
+  ) {
+    super(leaf);
+  }
+
+  override getViewType(): string {
+    return SUGGESTIONS_VIEW_TYPE;
+  }
+
+  override getDisplayText(): string {
+    return 'Sagittarius — Suggestions';
+  }
+
+  override getIcon(): string {
+    return 'lightbulb';
+  }
+
+  override async onOpen(): Promise<void> {
+    this.containerEl.empty();
+    const root = this.containerEl.createDiv({ cls: 'sagittarius-suggestions' });
+    this.renderHeader(root);
+    this.listEl = root.createDiv({ cls: 'sagittarius-suggestions-list' });
+    await this.refresh();
+  }
+
+  override onClose(): Promise<void> {
+    this.containerEl.empty();
+    return Promise.resolve();
+  }
+
+  /** Public — invoked from main.ts after watcher.classifyNote() enqueues. */
+  async refresh(): Promise<void> {
+    const queue = this.plugin.suggestionQueue;
+    if (queue === null) {
+      this.listEl.empty();
+      this.listEl.createEl('p', {
+        cls: 'sagittarius-suggestions-empty',
+        text:
+          'Organization engine is off. Enable it under Settings → Sagittarius → Organization (Phase 5).',
+      });
+      this.headerCountEl.setText('0');
+      return;
+    }
+
+    const minConfidence = this.plugin.settings.organizationMinConfidence;
+    const visible = await queue.list({
+      includeDeferred: true,
+      minConfidence,
+    });
+    const total = await queue.size();
+
+    this.headerCountEl.setText(`${visible.length} of ${total}`);
+
+    this.listEl.empty();
+    if (visible.length === 0) {
+      this.listEl.createEl('p', {
+        cls: 'sagittarius-suggestions-empty',
+        text:
+          total === 0
+            ? "No suggestions yet. Create or modify a note in a watched folder, or run “Sagittarius: organize inbox now.”"
+            : `${total} below-threshold suggestion(s) hidden. Lower the minimum confidence in settings to see them.`,
+      });
+      return;
+    }
+
+    for (const s of visible) {
+      this.renderRow(s);
+    }
+  }
+
+  private renderHeader(parent: HTMLElement): void {
+    const header = parent.createDiv({ cls: 'sagittarius-suggestions-header' });
+    header.createEl('h3', { text: 'Suggestions' });
+    const count = header.createSpan({ cls: 'sagittarius-suggestions-count' });
+    count.setText('0');
+    this.headerCountEl = count;
+
+    const actions = header.createDiv({ cls: 'sagittarius-suggestions-actions' });
+    const sweepBtn = actions.createEl('button', { text: 'Organize inbox now' });
+    sweepBtn.addEventListener('click', () => {
+      void this.plugin.runOrganizationSweep();
+    });
+    const refreshBtn = actions.createEl('button', { text: 'Refresh' });
+    refreshBtn.addEventListener('click', () => {
+      void this.refresh();
+    });
+    const clearBtn = actions.createEl('button', { text: 'Clear all' });
+    clearBtn.addEventListener('click', () => {
+      void this.handleClearAll();
+    });
+  }
+
+  private renderRow(s: Suggestion): void {
+    const row = this.listEl.createDiv({
+      cls:
+        'sagittarius-suggestion-row' +
+        (s.deferred === true ? ' sagittarius-suggestion-deferred' : ''),
+    });
+
+    const head = row.createDiv({ cls: 'sagittarius-suggestion-head' });
+    head.createSpan({
+      cls: 'sagittarius-suggestion-kind',
+      text: s.kind === 'route' ? '↪ Move' : '+ Add to MOC',
+    });
+    head.createSpan({
+      cls: 'sagittarius-suggestion-confidence',
+      text: `(${Math.round(s.confidence * 100)}%)`,
+    });
+
+    const body = row.createDiv({ cls: 'sagittarius-suggestion-body' });
+    if (s.kind === 'route') {
+      body.createEl('code', { text: s.notePath });
+      body.appendText('  →  ');
+      body.createEl('code', { text: s.proposedFolder });
+    } else {
+      body.createEl('code', { text: s.notePath });
+      body.appendText('  +→  ');
+      body.createEl('code', { text: s.mocPath });
+    }
+
+    const reason = row.createDiv({ cls: 'sagittarius-suggestion-reason' });
+    reason.setText(s.reason);
+
+    const buttons = row.createDiv({ cls: 'sagittarius-suggestion-buttons' });
+    const applyBtn = buttons.createEl('button', {
+      text: 'Apply',
+      cls: 'mod-cta',
+    });
+    const skipBtn = buttons.createEl('button', { text: 'Skip' });
+    const deferBtn = buttons.createEl('button', { text: 'Defer' });
+
+    if (s.deferred === true) {
+      deferBtn.disabled = true;
+      deferBtn.setText('Deferred');
+    }
+
+    applyBtn.addEventListener('click', () => {
+      void this.handleApply(s);
+    });
+    skipBtn.addEventListener('click', () => {
+      void this.handleSkip(s);
+    });
+    deferBtn.addEventListener('click', () => {
+      void this.handleDefer(s);
+    });
+  }
+
+  private async handleApply(s: Suggestion): Promise<void> {
+    if (s.kind === 'moc-add') {
+      // v0.6.0 only ships `route` apply per ADR-017 D6.
+      new Notice('Sagittarius: moc-add suggestions arrive in v0.6.x.');
+      return;
+    }
+    const result = await this.plugin.applyRouteSuggestion(s);
+    if (result === 'applied') {
+      new Notice(`Sagittarius: moved ${s.notePath} → ${s.proposedFolder}`);
+    } else if (result === 'rejected') {
+      new Notice('Sagittarius: rejected in diff card — suggestion removed.');
+    } else {
+      new Notice(`Sagittarius: apply did not complete — see console.`);
+    }
+    await this.refresh();
+  }
+
+  private async handleSkip(s: Suggestion): Promise<void> {
+    const queue = this.plugin.suggestionQueue;
+    if (queue === null) {
+      return;
+    }
+    await queue.remove(s.id);
+    await this.refresh();
+  }
+
+  private async handleDefer(s: Suggestion): Promise<void> {
+    const queue = this.plugin.suggestionQueue;
+    if (queue === null) {
+      return;
+    }
+    await queue.defer(s.id);
+    await this.refresh();
+  }
+
+  private async handleClearAll(): Promise<void> {
+    const queue = this.plugin.suggestionQueue;
+    if (queue === null) {
+      return;
+    }
+    const total = await queue.size();
+    if (total === 0) {
+      return;
+    }
+    await queue.clear();
+    new Notice(`Sagittarius: cleared ${total} suggestion(s).`);
+    await this.refresh();
+  }
+}
+
+/** Compute the destination path for an applied route suggestion. Exported for tests. */
+export function destinationPathFor(s: RouteSuggestion): string {
+  const basename = s.notePath.split('/').pop() ?? s.notePath;
+  return s.proposedFolder.length > 0 ? `${s.proposedFolder}/${basename}` : basename;
+}
