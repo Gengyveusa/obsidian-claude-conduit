@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import type { VaultAdapter, VaultStat } from '../../src/agent/types';
+import type { MocAddClassifier } from '../../src/organization/MocAddClassifier';
+import type { MocCandidate, MocDiscovery } from '../../src/organization/MocDiscovery';
 import type {
   ClassificationOutcome,
   OrganizationClassifier,
@@ -10,7 +12,7 @@ import {
   type VaultEventEmitter,
 } from '../../src/organization/OrganizationWatcher';
 import { JsonSuggestionQueue } from '../../src/organization/SuggestionQueue';
-import type { RouteSuggestion } from '../../src/organization/types';
+import type { MocAddSuggestion, RouteSuggestion } from '../../src/organization/types';
 
 class MemAdapter implements VaultAdapter {
   files = new Map<string, string>();
@@ -387,6 +389,237 @@ describe('OrganizationWatcher — runtime config updates', () => {
     expect(h.clock.pending()).toBe(0);
     h.events.fireCreate('99-Other/x.md'); // newly watched
     expect(h.clock.pending()).toBe(1);
+  });
+});
+
+describe('OrganizationWatcher — moc-add integration (v0.6.x)', () => {
+  /** Builds a watcher with optional moc-add deps wired. */
+  interface MocHarness {
+    adapter: MemAdapter;
+    queue: JsonSuggestionQueue;
+    routeOutcomes: Array<RouteSuggestion | null | Error>;
+    mocOutcomes: Array<MocAddSuggestion | null | Error>;
+    routeClassifier: OrganizationClassifier & { calls: string[] };
+    mocClassifier: MocAddClassifier & { calls: string[] };
+    mocDiscovery: MocDiscovery;
+    discoveryCandidates: MocCandidate[];
+    watcher: OrganizationWatcher;
+  }
+
+  function makeMocHarness(opts: {
+    routeOutcomes: Array<RouteSuggestion | null | Error>;
+    mocOutcomes: Array<MocAddSuggestion | null | Error>;
+    discoveryCandidates?: MocCandidate[];
+    /** Set to null to omit the moc-add pair entirely (defaulted). */
+    withMocAdd?: boolean;
+  }): MocHarness {
+    const adapter = new MemAdapter();
+    const queue = new JsonSuggestionQueue({ adapter, path: QUEUE_PATH });
+
+    const routeCalls: string[] = [];
+    let routeIdx = 0;
+    const routeClassifier = {
+      calls: routeCalls,
+      classifyForRoute: (path: string): Promise<ClassificationOutcome> => {
+        routeCalls.push(path);
+        const next = opts.routeOutcomes[routeIdx++];
+        if (next instanceof Error) {
+          return Promise.reject(next);
+        }
+        return Promise.resolve({
+          suggestion: next,
+          tokensIn: 50,
+          tokensOut: 20,
+          rawResponse: '{}',
+        });
+      },
+    } as unknown as OrganizationClassifier & { calls: string[] };
+
+    const mocCalls: string[] = [];
+    let mocIdx = 0;
+    const mocClassifier = {
+      calls: mocCalls,
+      classifyForMocAdd: (
+        path: string,
+        _candidates: MocCandidate[],
+      ): Promise<{
+        suggestion: MocAddSuggestion | null;
+        tokensIn: number;
+        tokensOut: number;
+        rawResponse: string;
+      }> => {
+        mocCalls.push(path);
+        const next = opts.mocOutcomes[mocIdx++];
+        if (next instanceof Error) {
+          return Promise.reject(next);
+        }
+        return Promise.resolve({
+          suggestion: next,
+          tokensIn: 40,
+          tokensOut: 15,
+          rawResponse: '{}',
+        });
+      },
+    } as unknown as MocAddClassifier & { calls: string[] };
+
+    const discoveryCandidates = opts.discoveryCandidates ?? [];
+    const mocDiscovery = {
+      discover: (): Promise<MocCandidate[]> => Promise.resolve(discoveryCandidates),
+    } as unknown as MocDiscovery;
+
+    const withMocAdd = opts.withMocAdd ?? true;
+    const watcher = new OrganizationWatcher({
+      classifier: routeClassifier,
+      queue,
+      events: new FakeEmitter(),
+      adapter,
+      enabled: true,
+      watchedFolders: ['10-Inbox/'],
+      debounceMs: 100,
+      logger: { warn: () => {} },
+      ...(withMocAdd && { mocAddClassifier: mocClassifier, mocDiscovery }),
+    });
+
+    return {
+      adapter,
+      queue,
+      routeOutcomes: opts.routeOutcomes,
+      mocOutcomes: opts.mocOutcomes,
+      routeClassifier,
+      mocClassifier,
+      mocDiscovery,
+      discoveryCandidates,
+      watcher,
+    };
+  }
+
+  const candidate: MocCandidate = {
+    path: '22-Decisions/00_Index.md',
+    basename: '00_Index',
+    firstHeading: 'Decisions',
+    wikilinkBulletCount: 5,
+    metrics: {
+      looksLikeMoc: true,
+      firstHeading: 'Decisions',
+      wikilinkBulletCount: 5,
+      bodyLineCount: 6,
+      linkDensity: 0.83,
+    },
+  };
+
+  const mocSugg: MocAddSuggestion = {
+    kind: 'moc-add',
+    id: 'm-1',
+    createdAt: 1700000000,
+    notePath: '10-Inbox/foo.md',
+    mocPath: '22-Decisions/00_Index.md',
+    reason: 'fits the decisions theme',
+    confidence: 0.82,
+  };
+
+  it('runs moc-add when route returns KEEP and a MOC suggestion is found', async () => {
+    const h = makeMocHarness({
+      routeOutcomes: [null], // route says KEEP
+      mocOutcomes: [mocSugg],
+      discoveryCandidates: [candidate],
+    });
+    const out = await h.watcher.classifyNote('10-Inbox/foo.md');
+    expect(out.enqueued).toBe(true);
+    expect(h.routeClassifier.calls).toEqual(['10-Inbox/foo.md']);
+    expect(h.mocClassifier.calls).toEqual(['10-Inbox/foo.md']);
+    expect(await h.queue.size()).toBe(1);
+    const all = await h.queue.list();
+    expect(all[0].kind).toBe('moc-add');
+  });
+
+  it('does NOT run moc-add when route returns a route suggestion (move case)', async () => {
+    const routeSugg = route({ notePath: '10-Inbox/foo.md' });
+    const h = makeMocHarness({
+      routeOutcomes: [routeSugg],
+      mocOutcomes: [],
+      discoveryCandidates: [candidate],
+    });
+    const out = await h.watcher.classifyNote('10-Inbox/foo.md');
+    expect(out.enqueued).toBe(true);
+    expect(h.mocClassifier.calls).toEqual([]); // moc-add skipped
+    const all = await h.queue.list();
+    expect(all[0].kind).toBe('route');
+  });
+
+  it('returns classifier-said-keep when moc-add says NONE', async () => {
+    const h = makeMocHarness({
+      routeOutcomes: [null],
+      mocOutcomes: [null],
+      discoveryCandidates: [candidate],
+    });
+    const out = await h.watcher.classifyNote('10-Inbox/foo.md');
+    expect(out.enqueued).toBe(false);
+    expect(out.skipped).toBe('classifier-said-keep');
+    expect(h.mocClassifier.calls).toEqual(['10-Inbox/foo.md']);
+    expect(await h.queue.size()).toBe(0);
+  });
+
+  it('skips moc-add when no MOC candidates exist (empty discovery)', async () => {
+    const h = makeMocHarness({
+      routeOutcomes: [null],
+      mocOutcomes: [], // shouldn't be consulted
+      discoveryCandidates: [],
+    });
+    const out = await h.watcher.classifyNote('10-Inbox/foo.md');
+    expect(out.skipped).toBe('classifier-said-keep');
+    expect(h.mocClassifier.calls).toEqual([]); // no candidates → no LLM call
+  });
+
+  it('skips moc-add when moc-add deps are not configured', async () => {
+    const h = makeMocHarness({
+      routeOutcomes: [null],
+      mocOutcomes: [],
+      discoveryCandidates: [candidate],
+      withMocAdd: false, // deps omitted
+    });
+    const out = await h.watcher.classifyNote('10-Inbox/foo.md');
+    expect(out.skipped).toBe('classifier-said-keep');
+    expect(h.mocClassifier.calls).toEqual([]); // moc deps absent → silent skip
+  });
+
+  it('reports classifier-error on moc-add classifier throw', async () => {
+    const h = makeMocHarness({
+      routeOutcomes: [null],
+      mocOutcomes: [new Error('rate-limited')],
+      discoveryCandidates: [candidate],
+    });
+    const out = await h.watcher.classifyNote('10-Inbox/foo.md');
+    expect(out.skipped).toBe('classifier-error');
+    expect(out.error).toMatch(/rate-limited/);
+    expect(await h.queue.size()).toBe(0);
+  });
+
+  it('reports classifier-error when mocDiscovery throws', async () => {
+    const adapter = new MemAdapter();
+    const queue = new JsonSuggestionQueue({ adapter, path: QUEUE_PATH });
+    const routeClassifier = fakeClassifier([null]);
+    const mocClassifier = {
+      calls: [],
+      classifyForMocAdd: () => Promise.resolve({ suggestion: null, tokensIn: 0, tokensOut: 0, rawResponse: '' }),
+    } as unknown as MocAddClassifier & { calls: string[] };
+    const mocDiscovery = {
+      discover: () => Promise.reject(new Error('discovery boom')),
+    } as unknown as MocDiscovery;
+    const watcher = new OrganizationWatcher({
+      classifier: routeClassifier,
+      queue,
+      events: new FakeEmitter(),
+      adapter,
+      enabled: true,
+      watchedFolders: ['10-Inbox/'],
+      debounceMs: 100,
+      logger: { warn: () => {} },
+      mocAddClassifier: mocClassifier,
+      mocDiscovery,
+    });
+    const out = await watcher.classifyNote('10-Inbox/foo.md');
+    expect(out.skipped).toBe('classifier-error');
+    expect(out.error).toMatch(/discovery boom/);
   });
 });
 
