@@ -1,4 +1,4 @@
-import { type App, PluginSettingTab, Setting } from 'obsidian';
+import { type App, Notice, PluginSettingTab, Setting } from 'obsidian';
 
 import type SagittariusPlugin from '../main';
 
@@ -112,8 +112,13 @@ export class SagittariusSettingTab extends PluginSettingTab {
           .setPlaceholder('0.6')
           .setValue(String(this.plugin.settings.organizationMinConfidence))
           .onChange(async (value) => {
-            const n = parseFloat(value);
+            const trimmed = value.trim();
+            if (trimmed === '') {
+              return;
+            }
+            const n = parseFloat(trimmed);
             if (!Number.isFinite(n) || n < 0 || n > 1) {
+              new Notice('Sagittarius: minimum confidence must be a number between 0 and 1.');
               return;
             }
             this.plugin.settings.organizationMinConfidence = n;
@@ -132,8 +137,13 @@ export class SagittariusSettingTab extends PluginSettingTab {
           .setPlaceholder('0')
           .setValue(String(this.plugin.settings.organizationSweepIntervalSec))
           .onChange(async (value) => {
-            const n = parseInt(value, 10);
-            if (!Number.isFinite(n) || n < 0) {
+            const trimmed = value.trim();
+            if (trimmed === '') {
+              return;
+            }
+            const n = parseInt(trimmed, 10);
+            if (!Number.isFinite(n) || n < 0 || String(n) !== trimmed) {
+              new Notice('Sagittarius: sweep interval must be a non-negative integer (seconds).');
               return;
             }
             this.plugin.settings.organizationSweepIntervalSec = n;
