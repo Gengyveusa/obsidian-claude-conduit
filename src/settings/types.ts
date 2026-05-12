@@ -56,6 +56,48 @@ export interface SagittariusSettings {
    * your Obsidian "Files & Links → Attachment folder path" differs.
    */
   defaultAttachmentsFolder: string;
+
+  // Phase 5 organization engine (per ADR-017 D5)
+  /**
+   * Master switch. When false, no vault events are subscribed, no
+   * classifier calls happen, no queue items get added. Defaults off
+   * because Phase 5 is a meaningful behavior change — we don't opt
+   * users in silently.
+   */
+  organizationEnabled: boolean;
+  /**
+   * Vault-relative folders where new/modified notes get classified.
+   * Files outside these prefixes are ignored. Default `['10-Inbox/']`.
+   */
+  organizationWatchedFolders: string[];
+  /**
+   * Which Claude model the classifier calls. Sonnet default per
+   * ADR-017 D4 override — better routing quality than Haiku at
+   * modest cost. Users with high-volume inboxes can downgrade.
+   */
+  organizationClassifierModel:
+    | 'claude-sonnet-4-6'
+    | 'claude-haiku-4-5-20251001'
+    | 'claude-opus-4-7';
+  /**
+   * Confidence threshold for surfacing in the panel. Suggestions
+   * below this are stored on disk but filtered from the default view
+   * (a future "show low-confidence" toggle reveals them). Range 0..1;
+   * default 0.6 per ADR-017 D4.
+   */
+  organizationMinConfidence: number;
+  /**
+   * Background sweep interval, seconds. 0 = manual only (default).
+   * Non-zero values schedule a periodic `watcher.sweep()`. ADR-017
+   * D5 keeps this opt-in.
+   */
+  organizationSweepIntervalSec: number;
+  /**
+   * Vault-relative paths to MOC notes that the `moc-add` classifier
+   * (v0.6.x — not v0.6.0) considers for link insertion. Empty in
+   * v0.6.0; populated by users once v0.6.x ships moc-add.
+   */
+  organizationMocFolders: string[];
 }
 
 export const DEFAULT_SETTINGS: SagittariusSettings = {
@@ -84,4 +126,11 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
 
   writeMode: 'review',
   defaultAttachmentsFolder: 'attachments',
+
+  organizationEnabled: false,
+  organizationWatchedFolders: ['10-Inbox/'],
+  organizationClassifierModel: 'claude-sonnet-4-6',
+  organizationMinConfidence: 0.6,
+  organizationSweepIntervalSec: 0,
+  organizationMocFolders: [],
 };

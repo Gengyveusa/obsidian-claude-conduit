@@ -287,3 +287,102 @@
   color: var(--text-muted);
   font-size: 0.85em;
 }
+
+/* v0.6.0 — SuggestionsView panel (Phase 5 organization engine). */
+.sagittarius-suggestions {
+  padding: 0.6em 0.8em;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.sagittarius-suggestions-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  margin-bottom: 0.6em;
+}
+
+.sagittarius-suggestions-header h3 {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.sagittarius-suggestions-count {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+.sagittarius-suggestions-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 0.3em;
+}
+
+.sagittarius-suggestions-actions button {
+  font-size: 0.8em;
+  padding: 0.2em 0.5em;
+}
+
+.sagittarius-suggestions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+}
+
+.sagittarius-suggestions-empty {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 0.9em;
+}
+
+.sagittarius-suggestion-row {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  padding: 0.5em 0.7em;
+  background: var(--background-secondary);
+  font-size: 0.9em;
+}
+
+.sagittarius-suggestion-deferred {
+  opacity: 0.65;
+}
+
+.sagittarius-suggestion-head {
+  display: flex;
+  gap: 0.4em;
+  align-items: baseline;
+  margin-bottom: 0.2em;
+}
+
+.sagittarius-suggestion-kind {
+  font-weight: 600;
+}
+
+.sagittarius-suggestion-confidence {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+.sagittarius-suggestion-body {
+  font-family: var(--font-monospace);
+  font-size: 0.85em;
+  word-break: break-all;
+  margin-bottom: 0.25em;
+}
+
+.sagittarius-suggestion-reason {
+  color: var(--text-muted);
+  font-style: italic;
+  font-size: 0.85em;
+  margin-bottom: 0.4em;
+}
+
+.sagittarius-suggestion-buttons {
+  display: flex;
+  gap: 0.4em;
+}
+
+.sagittarius-suggestion-buttons button {
+  font-size: 0.85em;
+  padding: 0.2em 0.6em;
+}

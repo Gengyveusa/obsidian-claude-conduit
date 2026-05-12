@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { Notice, Plugin, requestUrl } from 'obsidian';
+import { Notice, Plugin, type TAbstractFile, requestUrl } from 'obsidian';
 
 import { ConduitAgent } from './agent/ConduitAgent';
 import { ToolRegistry } from './agent/ToolRegistry';
@@ -35,8 +35,16 @@ import { RetrievalLayer } from './retrieval/RetrievalLayer';
 import type { SqliteEngine } from './retrieval/SqliteEngine';
 import { SagittariusSettingTab } from './settings/SagittariusSettingTab';
 import { DEFAULT_SETTINGS, type SagittariusSettings } from './settings/types';
+import { OrganizationClassifier } from './organization/OrganizationClassifier';
+import {
+  OrganizationWatcher,
+  type VaultEventEmitter,
+} from './organization/OrganizationWatcher';
+import { JsonSuggestionQueue, type SuggestionQueue } from './organization/SuggestionQueue';
+import type { RouteSuggestion } from './organization/types';
 import { ChatView, CHAT_VIEW_TYPE } from './views/ChatView';
 import { QuickQuestionModal } from './views/QuickQuestionModal';
+import { SuggestionsView, SUGGESTIONS_VIEW_TYPE, destinationPathFor } from './views/SuggestionsView';
 import { UndoConfirmModal } from './views/UndoConfirmModal';
 import { CallbackApprovalGate } from './writes/CallbackApprovalGate';
 import { JsonTransactionLog } from './writes/TransactionLog';
@@ -49,9 +57,12 @@ const CONSTITUTION_PATH = 'THAD_MAN.md';
 const HANGAR_VOICE_PATH = '21-Agents/concierge.md';
 const INDEX_DB_PATH = '.obsidian/plugins/obsidian-claude-conduit/index.sqlite';
 const TX_LOG_PATH = '.obsidian/plugins/obsidian-claude-conduit/transactions.json';
+const SUGGESTIONS_PATH = '.obsidian/plugins/obsidian-claude-conduit/suggestions.json';
 
 interface AgentBundle {
   agent: ConduitAgent;
+  /** The deps that were passed to the agent. Phase 5 reuses them. */
+  deps: ConstructorParameters<typeof ConduitAgent>[0];
 }
 
 /**
@@ -76,6 +87,13 @@ export default class SagittariusPlugin extends Plugin {
    * actionable error to the LLM. See ADR-016 D2.
    */
   readonly approvalGate = new CallbackApprovalGate();
+  /**
+   * Phase 5 organization-engine state. Lazily constructed when
+   * `organizationEnabled` flips on. Null when the engine is off so the
+   * SuggestionsView can render an empty-state with a helpful nudge.
+   */
+  suggestionQueue: SuggestionQueue | null = null;
+  private organizationWatcher: OrganizationWatcher | null = null;
   private agentBundle: AgentBundle | null = null;
   private engine?: SqliteEngine;
   private embedClient?: EmbedClient;
@@ -86,6 +104,10 @@ export default class SagittariusPlugin extends Plugin {
     this.addSettingTab(new SagittariusSettingTab(this.app, this));
 
     this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
+    this.registerView(
+      SUGGESTIONS_VIEW_TYPE,
+      (leaf) => new SuggestionsView(leaf, this),
+    );
 
     this.addRibbonIcon(RIBBON_ICON, PLUGIN_NAME, () => {
       void this.activateChatView();
@@ -130,6 +152,22 @@ export default class SagittariusPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: 'open-suggestions',
+      name: 'Open suggestions panel',
+      callback: () => {
+        void this.activateSuggestionsView();
+      },
+    });
+
+    this.addCommand({
+      id: 'organize-inbox-now',
+      name: 'Organize inbox now',
+      callback: () => {
+        void this.runOrganizationSweep();
+      },
+    });
+
+    this.addCommand({
       id: 'system-check',
       name: 'System check',
       callback: () => {
@@ -157,9 +195,17 @@ export default class SagittariusPlugin extends Plugin {
         void this.autoIndexInBackground();
       }, 0);
     }
+
+    // Phase 5: wire the organization engine if the user opted in. Lives
+    // outside the initializeIndexing try/catch because a failure here
+    // shouldn't block the rest of the plugin.
+    this.refreshOrganizationEngine();
   }
 
   override onunload(): void {
+    this.organizationWatcher?.stop();
+    this.organizationWatcher = null;
+    this.suggestionQueue = null;
     this.agentBundle = null;
     this.engine?.close();
     delete this.engine;
@@ -285,6 +331,193 @@ export default class SagittariusPlugin extends Plugin {
     }
 
     new UndoConfirmModal(this.app, preview, replayer).open();
+  }
+
+  // ─── Phase 5 organization engine ──────────────────────────────────
+
+  /**
+   * Open the suggestions side panel (creates a leaf if missing).
+   */
+  async activateSuggestionsView(): Promise<void> {
+    const existing = this.app.workspace.getLeavesOfType(SUGGESTIONS_VIEW_TYPE);
+    if (existing.length > 0) {
+      await this.app.workspace.revealLeaf(existing[0]);
+      return;
+    }
+    const leaf = this.app.workspace.getRightLeaf(false);
+    if (leaf === null) {
+      new Notice('Sagittarius: could not open suggestions panel.');
+      return;
+    }
+    await leaf.setViewState({ type: SUGGESTIONS_VIEW_TYPE, active: true });
+    await this.app.workspace.revealLeaf(leaf);
+  }
+
+  /**
+   * Run a manual sweep across watched folders. Notice-only — the
+   * SuggestionsView re-renders independently when the user looks at it.
+   */
+  async runOrganizationSweep(): Promise<void> {
+    if (this.organizationWatcher === null) {
+      new Notice('Sagittarius: organization engine is off. Enable in settings.');
+      return;
+    }
+    new Notice('Sagittarius: organizing inbox…');
+    const summary = await this.organizationWatcher.sweep();
+    new Notice(
+      `Sagittarius: ${summary.classified} new, ${summary.skipped} skipped, ${summary.errors} error(s).`,
+    );
+    await this.refreshSuggestionsView();
+  }
+
+  /**
+   * Apply a `route` suggestion by invoking the registered `move_note`
+   * tool (which still gates through the Phase 4 diff card). On accept,
+   * removes the suggestion from the queue. On reject, also removes (the
+   * user explicitly said no in the diff card). On error, leaves in queue.
+   */
+  async applyRouteSuggestion(s: RouteSuggestion): Promise<'applied' | 'rejected' | 'error'> {
+    if (this.suggestionQueue === null) {
+      new Notice('Sagittarius: organization engine is off.');
+      return 'error';
+    }
+    const bundle = await this.getAgentBundle();
+    if (bundle === null) {
+      new Notice('Sagittarius: set your Anthropic API key first.');
+      return 'error';
+    }
+    const toPath = destinationPathFor(s);
+    try {
+      const result = (await bundle.deps.tools.execute('move_note', {
+        fromPath: s.notePath,
+        toPath,
+      })) as { status: string; error?: string; reason?: string };
+      if (result.status === 'applied') {
+        await this.suggestionQueue.remove(s.id);
+        return 'applied';
+      }
+      if (result.status === 'rejected') {
+        await this.suggestionQueue.remove(s.id);
+        return 'rejected';
+      }
+      // error / conflict
+      console.warn(`[sagittarius] apply route failed: ${result.error ?? result.reason ?? ''}`);
+      return 'error';
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[sagittarius] apply route threw: ${msg}`);
+      return 'error';
+    }
+  }
+
+  /** Re-render the SuggestionsView if it's open. */
+  async refreshSuggestionsView(): Promise<void> {
+    for (const leaf of this.app.workspace.getLeavesOfType(SUGGESTIONS_VIEW_TYPE)) {
+      const view = leaf.view;
+      if (view instanceof SuggestionsView) {
+        await view.refresh();
+      }
+    }
+  }
+
+  /**
+   * (Re-)wire the organization engine based on current settings. Called
+   * on plugin load + every time the user toggles a relevant setting.
+   * Tears down + rebuilds the watcher when settings change.
+   */
+  refreshOrganizationEngine(): void {
+    if (this.organizationWatcher !== null) {
+      this.organizationWatcher.stop();
+      this.organizationWatcher = null;
+    }
+
+    if (!this.settings.organizationEnabled) {
+      this.suggestionQueue = null;
+      void this.refreshSuggestionsView();
+      return;
+    }
+
+    // Engine needs: anthropic key (for classifier), HF retrieval (for grounding).
+    if (this.settings.apiKey.length === 0) {
+      new Notice('Sagittarius: organization engine needs an Anthropic API key.');
+      this.suggestionQueue = null;
+      return;
+    }
+
+    const adapter = new VaultAdapterImpl(this.app);
+    this.suggestionQueue = new JsonSuggestionQueue({
+      adapter,
+      path: SUGGESTIONS_PATH,
+    });
+
+    // Lazy-build classifier + watcher. Needs retrieval + constitution +
+    // a messages API. We piggyback on the agent bundle to get those —
+    // they're already constructed when the user has a key.
+    void this.bootOrganizationWatcher(adapter);
+  }
+
+  private async bootOrganizationWatcher(adapter: VaultAdapterImpl): Promise<void> {
+    const bundle = await this.getAgentBundle();
+    if (bundle === null) {
+      // Will retry when the agent is next requested. The queue is still
+      // live (so old suggestions render), just no new classifications.
+      return;
+    }
+    if (bundle.deps.retrieval === undefined) {
+      new Notice(
+        'Sagittarius: organization needs a HuggingFace token for retrieval grounding.',
+      );
+      return;
+    }
+    const classifier = new OrganizationClassifier({
+      adapter,
+      retrieval: bundle.deps.retrieval,
+      messages: bundle.deps.messages,
+      constitution: bundle.deps.systemPromptParts.constitution,
+      classifierModel: this.settings.organizationClassifierModel,
+    });
+    const events: VaultEventEmitter = {
+      onCreate: (handler) => {
+        const cb = (...args: unknown[]): void => {
+          const file = args[0] as TAbstractFile;
+          if (file.path.endsWith('.md')) {
+            handler(file.path);
+          }
+        };
+        // Cast to the SDK's expected signature — Obsidian's typing uses
+        // a generic `(...data: unknown[]) => unknown` overload here.
+        this.app.vault.on('create', cb);
+        return () => {
+          this.app.vault.off('create', cb);
+        };
+      },
+      onDelete: (handler) => {
+        const cb = (...args: unknown[]): void => {
+          const file = args[0] as TAbstractFile;
+          if (file.path.endsWith('.md')) {
+            handler(file.path);
+          }
+        };
+        this.app.vault.on('delete', cb);
+        return () => {
+          this.app.vault.off('delete', cb);
+        };
+      },
+    };
+    if (this.suggestionQueue === null) {
+      return;
+    }
+    this.organizationWatcher = new OrganizationWatcher({
+      classifier,
+      queue: this.suggestionQueue,
+      events,
+      adapter,
+      enabled: true,
+      watchedFolders: this.settings.organizationWatchedFolders,
+      minConfidence: this.settings.organizationMinConfidence,
+    });
+    this.organizationWatcher.start();
+    await this.refreshSuggestionsView();
   }
 
   private async runSystemCheck(): Promise<void> {
@@ -489,6 +722,6 @@ export default class SagittariusPlugin extends Plugin {
       retrievalK: this.settings.retrievalK,
     });
 
-    return { agent };
+    return { agent, deps: agentDeps };
   }
 }

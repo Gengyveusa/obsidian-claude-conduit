@@ -37,7 +37,90 @@ export class SagittariusSettingTab extends PluginSettingTab {
     this.renderBudgetSection(containerEl);
     this.renderLogSection(containerEl);
     this.renderWriteLayerSection(containerEl);
+    this.renderOrganizationSection(containerEl);
     this.renderVoyageSection(containerEl);
+  }
+
+  private renderOrganizationSection(parent: HTMLElement): void {
+    parent.createEl('h3', { text: 'Organization (Phase 5)' });
+    parent.createEl('p', {
+      cls: 'setting-item-description',
+      text:
+        'Proactive: Sagittarius watches selected folders for new notes and proposes ' +
+        'better folders for them in a Suggestions panel. Off by default — flip the switch below to opt in. ' +
+        'Per ADR-017.',
+    });
+
+    new Setting(parent)
+      .setName('Enable organization engine')
+      .setDesc(
+        'When on, vault events trigger the classifier and queue suggestions. Off = no events, no classifier calls.',
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.organizationEnabled).onChange(async (value) => {
+          this.plugin.settings.organizationEnabled = value;
+          await this.plugin.saveSettings();
+          this.plugin.refreshOrganizationEngine();
+        }),
+      );
+
+    new Setting(parent)
+      .setName('Watched folders')
+      .setDesc(
+        'Comma-separated vault-relative folders (e.g. "10-Inbox/, 11-Drafts/"). Only notes in these folders get classified.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('10-Inbox/')
+          .setValue(this.plugin.settings.organizationWatchedFolders.join(', '))
+          .onChange(async (value) => {
+            this.plugin.settings.organizationWatchedFolders = value
+              .split(',')
+              .map((s) => s.trim())
+              .filter((s) => s.length > 0);
+            await this.plugin.saveSettings();
+            this.plugin.refreshOrganizationEngine();
+          }),
+      );
+
+    new Setting(parent)
+      .setName('Classifier model')
+      .setDesc(
+        'Sonnet (default) is the recommended balance per ADR-017 D4. Haiku is cheaper but routes more noisily; Opus costs more but reasons better about subtle conventions.',
+      )
+      .addDropdown((dd) =>
+        dd
+          .addOption('claude-sonnet-4-6', 'Sonnet 4.6 (recommended)')
+          .addOption('claude-haiku-4-5-20251001', 'Haiku 4.5 (cheap)')
+          .addOption('claude-opus-4-7', 'Opus 4.7 (premium)')
+          .setValue(this.plugin.settings.organizationClassifierModel)
+          .onChange(async (value) => {
+            this.plugin.settings.organizationClassifierModel =
+              value as typeof this.plugin.settings.organizationClassifierModel;
+            await this.plugin.saveSettings();
+            this.plugin.refreshOrganizationEngine();
+          }),
+      );
+
+    new Setting(parent)
+      .setName('Minimum confidence')
+      .setDesc(
+        'Suggestions below this confidence are stored on disk but hidden by default. Range 0–1; default 0.6.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('0.6')
+          .setValue(String(this.plugin.settings.organizationMinConfidence))
+          .onChange(async (value) => {
+            const n = parseFloat(value);
+            if (!Number.isFinite(n) || n < 0 || n > 1) {
+              return;
+            }
+            this.plugin.settings.organizationMinConfidence = n;
+            await this.plugin.saveSettings();
+            this.plugin.refreshOrganizationEngine();
+          }),
+      );
   }
 
   private renderWriteLayerSection(parent: HTMLElement): void {
