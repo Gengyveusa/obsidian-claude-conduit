@@ -96,6 +96,7 @@ export default class SagittariusPlugin extends Plugin {
    */
   suggestionQueue: SuggestionQueue | null = null;
   private organizationWatcher: OrganizationWatcher | null = null;
+  private organizationSweepHandle: number | null = null;
   private agentBundle: AgentBundle | null = null;
   private engine?: SqliteEngine;
   private embedClient?: EmbedClient;
@@ -205,6 +206,10 @@ export default class SagittariusPlugin extends Plugin {
   }
 
   override onunload(): void {
+    if (this.organizationSweepHandle !== null) {
+      clearInterval(this.organizationSweepHandle);
+      this.organizationSweepHandle = null;
+    }
     this.organizationWatcher?.stop();
     this.organizationWatcher = null;
     this.suggestionQueue = null;
@@ -359,16 +364,23 @@ export default class SagittariusPlugin extends Plugin {
    * Run a manual sweep across watched folders. Notice-only — the
    * SuggestionsView re-renders independently when the user looks at it.
    */
-  async runOrganizationSweep(): Promise<void> {
+  async runOrganizationSweep(opts: { silent?: boolean } = {}): Promise<void> {
     if (this.organizationWatcher === null) {
-      new Notice('Sagittarius: organization engine is off. Enable in settings.');
+      if (opts.silent !== true) {
+        new Notice('Sagittarius: organization engine is off. Enable in settings.');
+      }
       return;
     }
-    new Notice('Sagittarius: organizing inbox…');
+    if (opts.silent !== true) {
+      new Notice('Sagittarius: organizing inbox…');
+    }
     const summary = await this.organizationWatcher.sweep();
-    new Notice(
-      `Sagittarius: ${summary.classified} new, ${summary.skipped} skipped, ${summary.errors} error(s).`,
-    );
+    const shouldToast = opts.silent !== true || summary.classified > 0;
+    if (shouldToast) {
+      new Notice(
+        `Sagittarius: ${summary.classified} new, ${summary.skipped} skipped, ${summary.errors} error(s).`,
+      );
+    }
     await this.refreshSuggestionsView();
   }
 
@@ -491,6 +503,10 @@ export default class SagittariusPlugin extends Plugin {
    * Tears down + rebuilds the watcher when settings change.
    */
   refreshOrganizationEngine(): void {
+    if (this.organizationSweepHandle !== null) {
+      clearInterval(this.organizationSweepHandle);
+      this.organizationSweepHandle = null;
+    }
     if (this.organizationWatcher !== null) {
       this.organizationWatcher.stop();
       this.organizationWatcher = null;
@@ -604,6 +620,20 @@ export default class SagittariusPlugin extends Plugin {
         }),
     });
     this.organizationWatcher.start();
+
+    const intervalSec = this.settings.organizationSweepIntervalSec;
+    if (intervalSec > 0) {
+      // Cast: @types/node + DOM lib overlap means setInterval is typed
+      // NodeJS.Timeout here, but Obsidian's `registerInterval` + browser
+      // `clearInterval` both want a number, which is what we actually
+      // get at runtime.
+      const handle = setInterval(() => {
+        void this.runOrganizationSweep({ silent: true });
+      }, intervalSec * 1000) as unknown as number;
+      this.registerInterval(handle);
+      this.organizationSweepHandle = handle;
+    }
+
     await this.refreshSuggestionsView();
   }
 

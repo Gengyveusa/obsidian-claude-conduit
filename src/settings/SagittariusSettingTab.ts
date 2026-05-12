@@ -123,6 +123,26 @@ export class SagittariusSettingTab extends PluginSettingTab {
       );
 
     new Setting(parent)
+      .setName('Background sweep interval')
+      .setDesc(
+        'Periodically re-scan watched folders, in seconds. 0 (default) = manual only — sweep runs only when you trigger “Sagittarius: organize inbox now.” Non-zero schedules a silent periodic sweep; a toast appears only if it surfaces a new suggestion.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('0')
+          .setValue(String(this.plugin.settings.organizationSweepIntervalSec))
+          .onChange(async (value) => {
+            const n = parseInt(value, 10);
+            if (!Number.isFinite(n) || n < 0) {
+              return;
+            }
+            this.plugin.settings.organizationSweepIntervalSec = n;
+            await this.plugin.saveSettings();
+            this.plugin.refreshOrganizationEngine();
+          }),
+      );
+
+    new Setting(parent)
       .setName('MOC folders (v0.6.x)')
       .setDesc(
         'Comma-separated folders where Map-of-Content notes live (e.g. "22-Decisions/, 30-Gengyve-GTM/"). When non-empty, Sagittarius proposes adding inbox notes to a matching MOC via `link_notes` (still gated by the diff card). Empty = moc-add disabled.',

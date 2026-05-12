@@ -109,9 +109,16 @@ export class SuggestionsView extends ItemView {
     refreshBtn.addEventListener('click', () => {
       void this.refresh();
     });
-    const clearBtn = actions.createEl('button', { text: 'Clear all' });
-    clearBtn.addEventListener('click', () => {
-      void this.handleClearAll();
+    const applyAllBtn = actions.createEl('button', {
+      text: 'Apply all',
+      cls: 'mod-cta',
+    });
+    applyAllBtn.addEventListener('click', () => {
+      void this.handleApplyAll();
+    });
+    const skipAllBtn = actions.createEl('button', { text: 'Skip all' });
+    skipAllBtn.addEventListener('click', () => {
+      void this.handleSkipAll();
     });
   }
 
@@ -215,17 +222,70 @@ export class SuggestionsView extends ItemView {
     await this.refresh();
   }
 
-  private async handleClearAll(): Promise<void> {
+  /**
+   * Bulk apply every visible suggestion. Each routes through its own
+   * Phase 4 diff card (ADR-016 D2 invariant — every write is gated). The
+   * user clicks Confirm / Reject per suggestion; we tally the outcomes
+   * and surface a single summary Notice at the end.
+   *
+   * @example User has 3 route suggestions and clicks "Apply all":
+   *   - Diff card 1 → Confirm → applied
+   *   - Diff card 2 → Reject  → rejected
+   *   - Diff card 3 → Confirm → applied
+   *   Notice: "Applied 2, rejected 1, errors 0."
+   */
+  private async handleApplyAll(): Promise<void> {
     const queue = this.plugin.suggestionQueue;
     if (queue === null) {
       return;
     }
-    const total = await queue.size();
-    if (total === 0) {
+    const minConfidence = this.plugin.settings.organizationMinConfidence;
+    const snapshot = await queue.list({ includeDeferred: true, minConfidence });
+    if (snapshot.length === 0) {
+      new Notice('Sagittarius: no visible suggestions to apply.');
       return;
     }
-    await queue.clear();
-    new Notice(`Sagittarius: cleared ${total} suggestion(s).`);
+    let applied = 0;
+    let rejected = 0;
+    let errored = 0;
+    for (const s of snapshot) {
+      const result =
+        s.kind === 'moc-add'
+          ? await this.plugin.applyMocAddSuggestion(s)
+          : await this.plugin.applyRouteSuggestion(s);
+      if (result === 'applied') {
+        applied += 1;
+      } else if (result === 'rejected') {
+        rejected += 1;
+      } else {
+        errored += 1;
+      }
+    }
+    new Notice(
+      `Sagittarius: applied ${applied}, rejected ${rejected}, errors ${errored}.`,
+    );
+    await this.refresh();
+  }
+
+  /**
+   * Bulk skip every visible suggestion. Drops them from the queue
+   * without invoking any write tool. Below-threshold suggestions are
+   * untouched (the panel's filter is the source of "visible").
+   */
+  private async handleSkipAll(): Promise<void> {
+    const queue = this.plugin.suggestionQueue;
+    if (queue === null) {
+      return;
+    }
+    const minConfidence = this.plugin.settings.organizationMinConfidence;
+    const snapshot = await queue.list({ includeDeferred: true, minConfidence });
+    if (snapshot.length === 0) {
+      return;
+    }
+    for (const s of snapshot) {
+      await queue.remove(s.id);
+    }
+    new Notice(`Sagittarius: skipped ${snapshot.length} suggestion(s).`);
     await this.refresh();
   }
 }
