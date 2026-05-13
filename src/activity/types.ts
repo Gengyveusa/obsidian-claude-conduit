@@ -19,7 +19,8 @@ export type ActivityEventKind =
   | 'suggestion.skipped'
   | 'write.committed'
   | 'write.undone'
-  | 'error';
+  | 'error'
+  | 'diagnostic';
 
 interface BaseActivityEvent {
   /** Unique id, `${Date.now()}-${random6}` per the SuggestionQueue convention. */
@@ -105,6 +106,20 @@ export interface ErrorEvent extends BaseActivityEvent {
   message: string;
 }
 
+/**
+ * v0.8.1 — single-line breadcrumb of a diagnostics run. The full report is
+ * also printed to `console.warn`; the event is the historical record so
+ * "when did I run diagnostics yesterday and what was the queue size?"
+ * is answerable without scrolling the console.
+ */
+export interface DiagnosticEvent extends BaseActivityEvent {
+  kind: 'diagnostic';
+  /** One-line summary, e.g. `'org=on, queue=3, activity=142, index=loaded'`. */
+  summary: string;
+  /** Structured details. Free-form so future probes can extend without a schema bump. */
+  details: Record<string, unknown>;
+}
+
 export type ActivityEvent =
   | IndexBuiltEvent
   | ClassifierRanEvent
@@ -114,7 +129,8 @@ export type ActivityEvent =
   | SuggestionSkippedEvent
   | WriteCommittedEvent
   | WriteUndoneEvent
-  | ErrorEvent;
+  | ErrorEvent
+  | DiagnosticEvent;
 
 /**
  * Distributive `Omit` — produces the union of every event variant minus

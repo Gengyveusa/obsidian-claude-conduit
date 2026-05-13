@@ -20,6 +20,11 @@ import { makeSearchVaultTool } from './agent/tools/search_vault';
 import { BudgetTracker } from './budget/BudgetTracker';
 import { PluginDataBudgetPersistence } from './budget/PluginDataBudgetPersistence';
 import type { MessagesAPI } from './agent/ConduitAgent';
+import {
+  formatDiagnosticsReport,
+  formatDiagnosticsSummary,
+  gatherDiagnostics,
+} from './diag/OrganizationDiagnostics';
 import { SystemCheck, formatReport, formatSummary } from './diag/SystemCheck';
 import { IndexCoordinator } from './indexing/IndexCoordinator';
 import { IndexPersistence } from './indexing/IndexPersistence';
@@ -206,6 +211,14 @@ export default class SagittariusPlugin extends Plugin {
       name: 'System check',
       callback: () => {
         void this.runSystemCheck();
+      },
+    });
+
+    this.addCommand({
+      id: 'run-diagnostics',
+      name: 'Run diagnostics',
+      callback: () => {
+        void this.runOrganizationDiagnostics();
       },
     });
 
@@ -815,6 +828,41 @@ export default class SagittariusPlugin extends Plugin {
     const report = await checker.run();
     new Notice(formatSummary(report));
     console.warn(formatReport(report));
+  }
+
+  /**
+   * v0.8.1 — gather state from every Phase 5/6 subsystem and:
+   *   - print a System-Check-style multi-line report to `console.warn`
+   *     (full detail)
+   *   - record a single `diagnostic` event in the activity stream
+   *     (historical breadcrumb)
+   *   - open the activity view so the operator can see the event
+   *   - surface a one-line headline as a Notice
+   *
+   * Closes ADR-018 lesson 3 — the "DevTools eval doesn't scale" gap.
+   */
+  private async runOrganizationDiagnostics(): Promise<void> {
+    const snap = await gatherDiagnostics({
+      pluginVersion: this.manifest.version,
+      settings: this.settings,
+      activityLog: this.activityLog,
+      suggestionQueue: this.suggestionQueue,
+      engineLoaded: this.engine !== undefined,
+      isIndexing: this.isIndexing(),
+    });
+    const report = formatDiagnosticsReport(snap);
+    const summary = formatDiagnosticsSummary(snap);
+    console.warn(report);
+    if (this.activityLog !== null) {
+      await this.activityLog.record({
+        kind: 'diagnostic',
+        summary,
+        details: snap as unknown as Record<string, unknown>,
+      });
+      await this.activateActivityView();
+      await this.refreshSuggestionsView();
+    }
+    new Notice(`Sagittarius diagnostics: ${summary} (full report in console).`);
   }
 
   /** Background-friendly auto-index runner. Kept silent on success. */
