@@ -2,6 +2,7 @@ import type {
   ActivityEvent,
   ActivityEventKind,
   ClassifierRanEvent,
+  DiagnosticEvent,
   ErrorEvent,
   IndexBuiltEvent,
   SuggestionAppliedEvent,
@@ -28,6 +29,7 @@ export const KIND_GLYPHS: Record<ActivityEventKind, string> = {
   'write.committed': '✎ write',
   'write.undone': '↶ undo',
   error: '⚠ error',
+  diagnostic: '⊕ diagnostic',
 };
 
 /** Compute a one-line human summary for any event. */
@@ -51,6 +53,8 @@ export function summarize(event: ActivityEvent): string {
       return summarizeWriteUndone(event);
     case 'error':
       return summarizeError(event);
+    case 'diagnostic':
+      return summarizeDiagnostic(event);
   }
 }
 
@@ -96,6 +100,10 @@ function summarizeError(e: ErrorEvent): string {
   return `${e.source} — ${e.message}`;
 }
 
+function summarizeDiagnostic(e: DiagnosticEvent): string {
+  return e.summary;
+}
+
 /** Return the note/file path associated with an event, or null. */
 export function pathOf(event: ActivityEvent): string | null {
   switch (event.kind) {
@@ -110,6 +118,7 @@ export function pathOf(event: ActivityEvent): string | null {
     case 'index.built':
     case 'write.undone':
     case 'error':
+    case 'diagnostic':
       return null;
   }
 }
