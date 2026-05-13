@@ -58,6 +58,18 @@ export interface ActivityLog {
 
   /** Drop every event. */
   clear(): Promise<void>;
+
+  /**
+   * v0.8.2 — drop events matching the same filter options as `list()`.
+   * Returns the number of events removed. Used by the "Clear filtered"
+   * bulk op in the activity view (ADR-019 D6 v0.8.2 close).
+   *
+   * - No options → equivalent to `clear()`.
+   * - `kinds` → drop events whose kind is in the set.
+   * - `sinceMs` → drop events with `timestamp >= sinceMs`.
+   * - Both → drop events matching BOTH (intersection).
+   */
+  clearMatching(opts: { kinds?: ActivityEventKind[]; sinceMs?: number }): Promise<number>;
 }
 
 export interface JsonActivityLogOptions {
@@ -130,6 +142,36 @@ export class JsonActivityLog implements ActivityLog {
 
   async clear(): Promise<void> {
     await this.adapter.write(this.path, '[]');
+  }
+
+  async clearMatching(opts: {
+    kinds?: ActivityEventKind[];
+    sinceMs?: number;
+  }): Promise<number> {
+    const hasKindFilter = opts.kinds !== undefined && opts.kinds.length > 0;
+    const hasSinceFilter = opts.sinceMs !== undefined;
+    if (!hasKindFilter && !hasSinceFilter) {
+      const count = (await this.loadAll()).length;
+      await this.clear();
+      return count;
+    }
+    const kindSet =
+      opts.kinds !== undefined && opts.kinds.length > 0 ? new Set(opts.kinds) : null;
+    const sinceMs = opts.sinceMs;
+    const all = await this.loadAll();
+    const kept: ActivityEvent[] = [];
+    let dropped = 0;
+    for (const event of all) {
+      const matchesKind = kindSet === null || kindSet.has(event.kind);
+      const matchesSince = sinceMs === undefined || event.timestamp >= sinceMs;
+      if (matchesKind && matchesSince) {
+        dropped += 1;
+      } else {
+        kept.push(event);
+      }
+    }
+    await this.persist(kept);
+    return dropped;
   }
 
   private async loadAll(): Promise<ActivityEvent[]> {
