@@ -24,6 +24,7 @@ function fakeActivityLog(events: ActivityEvent[]): ActivityLog {
       events.length = 0;
       return Promise.resolve();
     },
+    clearMatching: () => Promise.resolve(0),
   };
 }
 

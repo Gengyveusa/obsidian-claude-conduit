@@ -1,4 +1,4 @@
-import { ItemView, type WorkspaceLeaf } from 'obsidian';
+import { ItemView, Notice, type WorkspaceLeaf } from 'obsidian';
 
 import { KIND_GLYPHS, formatRelative, pathOf, summarize } from '../activity/format';
 import type { ActivityEvent, ActivityEventKind } from '../activity/types';
@@ -73,10 +73,16 @@ export class ActivityView extends ItemView {
     }
 
     const filterKinds = FILTERS[this.activeFilter];
-    const events =
-      filterKinds === null
-        ? await log.list({ limit: 200 })
-        : await log.list({ kinds: filterKinds, limit: 200 });
+    const listOpts: { limit: number; kinds?: ActivityEventKind[]; sinceMs?: number } = {
+      limit: 200,
+    };
+    if (filterKinds !== null) {
+      listOpts.kinds = filterKinds;
+    }
+    if (this.activeFilter === 'last24h') {
+      listOpts.sinceMs = Date.now() - 24 * 60 * 60 * 1000;
+    }
+    const events = await log.list(listOpts);
     const total = await log.size();
     this.headerCountEl.setText(`${events.length} of ${total}`);
 
@@ -107,6 +113,10 @@ export class ActivityView extends ItemView {
     const refreshBtn = actions.createEl('button', { text: 'Refresh' });
     refreshBtn.addEventListener('click', () => {
       void this.refresh();
+    });
+    const clearBtn = actions.createEl('button', { text: 'Clear filtered' });
+    clearBtn.addEventListener('click', () => {
+      void this.handleClearFiltered();
     });
 
     const chips = parent.createDiv({ cls: 'sagittarius-activity-chips' });
@@ -154,6 +164,37 @@ export class ActivityView extends ItemView {
       });
     }
   }
+
+  /**
+   * v0.8.2 — drop every event matching the active filter. Mirrors the
+   * SuggestionsView's Skip-all but applied to the activity log. When the
+   * filter is `all`, clears the entire log. When `last24h`, clears only
+   * the last 24h. When kind-scoped (errors, classifier, etc.), clears
+   * only that kind.
+   */
+  private async handleClearFiltered(): Promise<void> {
+    const log = this.plugin.activityLog;
+    if (log === null) {
+      return;
+    }
+    const filterKinds = FILTERS[this.activeFilter];
+    const clearOpts: { kinds?: ActivityEventKind[]; sinceMs?: number } = {};
+    if (filterKinds !== null) {
+      clearOpts.kinds = filterKinds;
+    }
+    if (this.activeFilter === 'last24h') {
+      clearOpts.sinceMs = Date.now() - 24 * 60 * 60 * 1000;
+    }
+    const dropped = await log.clearMatching(clearOpts);
+    if (dropped === 0) {
+      new Notice('Sagittarius: nothing to clear for this filter.');
+    } else {
+      new Notice(
+        `Sagittarius: cleared ${dropped} event(s) (${FILTER_LABELS[this.activeFilter]}).`,
+      );
+    }
+    await this.refresh();
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -162,6 +203,7 @@ export class ActivityView extends ItemView {
 
 type FilterId =
   | 'all'
+  | 'last24h'
   | 'errors'
   | 'classifier'
   | 'suggestions'
@@ -170,6 +212,7 @@ type FilterId =
 
 const FILTER_ORDER: FilterId[] = [
   'all',
+  'last24h',
   'errors',
   'classifier',
   'suggestions',
@@ -179,6 +222,7 @@ const FILTER_ORDER: FilterId[] = [
 
 const FILTER_LABELS: Record<FilterId, string> = {
   all: 'All',
+  last24h: 'Last 24h',
   errors: 'Errors',
   classifier: 'Classifier',
   suggestions: 'Suggestions',
@@ -186,9 +230,10 @@ const FILTER_LABELS: Record<FilterId, string> = {
   index: 'Index',
 };
 
-/** Map filter chip → which event kinds to include. `null` = no filter. */
+/** Map filter chip → which event kinds to include. `null` = no kind filter. */
 const FILTERS: Record<FilterId, ActivityEventKind[] | null> = {
   all: null,
+  last24h: null,
   errors: ['error'],
   classifier: ['classifier.ran'],
   suggestions: [

@@ -659,6 +659,7 @@ describe('OrganizationWatcher — activity emission (v0.8.0 PR 2)', () => {
         list: () => Promise.resolve([]),
         size: () => Promise.resolve(0),
         clear: () => Promise.resolve(),
+        clearMatching: () => Promise.resolve(0),
       },
       logger: { warn: () => {} },
     });
@@ -708,6 +709,7 @@ describe('OrganizationWatcher — activity emission (v0.8.0 PR 2)', () => {
         list: () => Promise.resolve([]),
         size: () => Promise.resolve(0),
         clear: () => Promise.resolve(),
+        clearMatching: () => Promise.resolve(0),
       },
       logger: { warn: () => {} },
     });
@@ -744,6 +746,7 @@ describe('OrganizationWatcher — activity emission (v0.8.0 PR 2)', () => {
         list: () => Promise.resolve([]),
         size: () => Promise.resolve(0),
         clear: () => Promise.resolve(),
+        clearMatching: () => Promise.resolve(0),
       },
       logger: { warn: () => {} },
     });

@@ -182,6 +182,74 @@ describe('JsonActivityLog', () => {
     expect(await log.size()).toBe(0);
   });
 
+  describe('clearMatching (v0.8.2)', () => {
+    it('with no options behaves like clear() — drops everything', async () => {
+      const { log, clock } = makeLog();
+      clock.now = 1000;
+      await log.record({ kind: 'error', source: 'a', message: 'x' });
+      clock.now = 2000;
+      await log.record({ kind: 'write.committed', toolName: 't', path: 'p' });
+      const dropped = await log.clearMatching({});
+      expect(dropped).toBe(2);
+      expect(await log.size()).toBe(0);
+    });
+
+    it('with kinds drops only matching kinds', async () => {
+      const { log, clock } = makeLog();
+      clock.now = 1000;
+      await log.record({ kind: 'error', source: 'a', message: 'x' });
+      clock.now = 2000;
+      await log.record({ kind: 'write.committed', toolName: 't', path: 'p' });
+      clock.now = 3000;
+      await log.record({ kind: 'error', source: 'b', message: 'y' });
+      const dropped = await log.clearMatching({ kinds: ['error'] });
+      expect(dropped).toBe(2);
+      const remaining = await log.list();
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].kind).toBe('write.committed');
+    });
+
+    it('with sinceMs drops only events >= threshold', async () => {
+      const { log, clock } = makeLog();
+      clock.now = 1000;
+      await log.record({ kind: 'error', source: 'old', message: 'old' });
+      clock.now = 5000;
+      await log.record({ kind: 'error', source: 'mid', message: 'mid' });
+      clock.now = 9000;
+      await log.record({ kind: 'error', source: 'new', message: 'new' });
+      const dropped = await log.clearMatching({ sinceMs: 4000 });
+      expect(dropped).toBe(2);
+      const remaining = await log.list();
+      expect(remaining).toHaveLength(1);
+      expect((remaining[0] as { message: string }).message).toBe('old');
+    });
+
+    it('with both kinds + sinceMs drops the intersection only', async () => {
+      const { log, clock } = makeLog();
+      clock.now = 1000;
+      await log.record({ kind: 'error', source: 'old-err', message: 'a' });
+      clock.now = 5000;
+      await log.record({ kind: 'write.committed', toolName: 't', path: 'p' });
+      clock.now = 6000;
+      await log.record({ kind: 'error', source: 'new-err', message: 'b' });
+      const dropped = await log.clearMatching({ kinds: ['error'], sinceMs: 4000 });
+      // Drops only the new-err (error AND >= 4000). old-err stays (too old);
+      // write.committed stays (wrong kind).
+      expect(dropped).toBe(1);
+      const remaining = await log.list();
+      expect(remaining).toHaveLength(2);
+    });
+
+    it('returns 0 when nothing matches', async () => {
+      const { log, clock } = makeLog();
+      clock.now = 1000;
+      await log.record({ kind: 'error', source: 'a', message: 'x' });
+      const dropped = await log.clearMatching({ kinds: ['write.committed'] });
+      expect(dropped).toBe(0);
+      expect(await log.size()).toBe(1);
+    });
+  });
+
   it('tolerates a missing file (first-run case)', async () => {
     const { log } = makeLog();
     const list = await log.list();
