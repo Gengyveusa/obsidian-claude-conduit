@@ -6,7 +6,7 @@ This file orients a Claude Code session opened against this repo. Substrate ques
 
 - **Name:** Sagittarius — Claude Conduit (`obsidian-claude-conduit`)
 - **What:** Native Obsidian plugin. Chat with your vault, retrieval-grounded.
-- **Status:** v1.0.3 — first v1.x release. Phase 6.5 (MCP bridge) + Phase 7 (Curator) both closed. Curator ships six detectors total — four pure-rule (broken-link, orphan, missing-frontmatter, stale-note) live in `runCurator`; two LLM-judged (duplicate-candidate, tag-normalize) tested in isolation but await live wiring in a v1.0.x patch per ADR-024 lesson 1. Scheduled sweep landed. Retrospectives in ADR-023 (Phase 6.5) and ADR-024 (Phase 7). Next: Phase 8 (generative layer) — needs its own ADR.
+- **Status:** v1.0.4 — Curator LLM-judged wiring landed. All six detectors now live in `runCurator`: four pure-rule (broken-link, orphan, missing-frontmatter, stale-note) plus the two LLM-judged (duplicate-candidate via `RetrievalSimilarityFinder` + `AnthropicDuplicateLlmJudge`; tag-normalize via `AnthropicTagNormalizeLlmJudge`). Per-sweep diagnostic carries per-rule LLM-call counts. Closes ADR-024 lesson 1's wiring half. Remaining v1.0.x follow-ups: `SkipPatternStore` (ADR-022 D7) and structured apply paths for `normalize-tag` + `duplicate-candidate`. Next big steps: Phase 6.7 (MCP write-side, needs ADR-025) and Phase 8 (generative layer, needs ADR-026).
 - **Build pattern:** `pair-via-claude-code` per [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) (ADR-010). Thad decides; Claude implements.
 
 ## Read first (in this order)

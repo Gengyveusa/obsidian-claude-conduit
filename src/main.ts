@@ -43,12 +43,19 @@ import { generateBearerToken, hashToken } from './mcp/auth';
 import { McpServer } from './mcp/McpServer';
 import { SagittariusSettingTab } from './settings/SagittariusSettingTab';
 import { DEFAULT_SETTINGS, type SagittariusSettings } from './settings/types';
+import {
+  AnthropicDuplicateLlmJudge,
+  AnthropicTagNormalizeLlmJudge,
+} from './curator/AnthropicLlmJudge';
 import { CuratorOrchestrator } from './curator/CuratorOrchestrator';
 import { findingToSuggestion } from './curator/findingToSuggestion';
+import { RetrievalSimilarityFinder } from './curator/RetrievalSimilarityFinder';
 import { makeBrokenLinkRule } from './curator/rules/BrokenLinkRule';
+import { makeDuplicateCandidateRule } from './curator/rules/DuplicateCandidateRule';
 import { makeMissingFrontmatterRule } from './curator/rules/MissingFrontmatterRule';
 import { makeOrphanRule } from './curator/rules/OrphanRule';
 import { makeStaleNoteRule } from './curator/rules/StaleNoteRule';
+import { makeTagNormalizeRule } from './curator/rules/TagNormalizeRule';
 import { VaultCorpus } from './curator/VaultCorpus';
 import { MocAddClassifier } from './organization/MocAddClassifier';
 import { MocDiscovery } from './organization/MocDiscovery';
@@ -1021,6 +1028,36 @@ export default class SagittariusPlugin extends Plugin {
       );
     }
 
+    // v1.0.4 — LLM-judged rules per ADR-024 follow-up. Each needs its
+    // production-side adapter: an Anthropic client (apiKey set) for the
+    // judge, and a loaded SQLite index (`engine`) for the similarity
+    // finder. If a dep is missing we skip the rule rather than failing
+    // the whole sweep — the pure rules above still run.
+    let duplicateJudge: AnthropicDuplicateLlmJudge | null = null;
+    let tagNormalizeJudge: AnthropicTagNormalizeLlmJudge | null = null;
+    if (this.settings.apiKey.length > 0) {
+      const client = new Anthropic({
+        apiKey: this.settings.apiKey,
+        dangerouslyAllowBrowser: true,
+      });
+      if (rules['duplicate-candidate'] !== false && this.engine !== undefined) {
+        const finder = new RetrievalSimilarityFinder(this.engine);
+        duplicateJudge = new AnthropicDuplicateLlmJudge(client.messages);
+        orchestrator.register(
+          makeDuplicateCandidateRule({
+            similarityFinder: finder,
+            llmJudge: duplicateJudge,
+          }),
+        );
+      }
+      if (rules['normalize-tag'] !== false) {
+        tagNormalizeJudge = new AnthropicTagNormalizeLlmJudge(client.messages);
+        orchestrator.register(
+          makeTagNormalizeRule({ llmJudge: tagNormalizeJudge }),
+        );
+      }
+    }
+
     if (orchestrator.registeredRuleNames().length === 0) {
       new Notice('Sagittarius: no curator rules enabled — nothing to do.');
       return;
@@ -1057,6 +1094,34 @@ export default class SagittariusPlugin extends Plugin {
         });
       }
     }
+
+    // v1.0.4 — one diagnostic per sweep, carrying per-rule LLM counts so
+    // the activity stream answers "what did the curator spend tokens on
+    // yesterday?" per ADR-024 follow-up. Pure-rule sweeps emit zero
+    // counts; absent judge = rule not registered.
+    const llmCalls: Record<string, number> = {};
+    if (duplicateJudge !== null) {
+      llmCalls['duplicate-candidate'] = duplicateJudge.callCount;
+    }
+    if (tagNormalizeJudge !== null) {
+      llmCalls['normalize-tag'] = tagNormalizeJudge.callCount;
+    }
+    await this.activityLog?.record({
+      kind: 'diagnostic',
+      summary:
+        `curator: rules=${outcome.rulesRun} detected=${outcome.totalDetected} ` +
+        `enqueued=${enqueuedCount} capped=${outcome.capped} errors=${outcome.errors.length}`,
+      details: {
+        scope: 'curator.swept',
+        rulesRun: outcome.rulesRun,
+        totalDetected: outcome.totalDetected,
+        enqueued: enqueuedCount,
+        capped: outcome.capped,
+        errors: outcome.errors,
+        durationMs: outcome.durationMs,
+        llmCalls,
+      },
+    });
 
     new Notice(
       `Sagittarius: curator found ${outcome.totalDetected}, enqueued ${enqueuedCount}, ` +
