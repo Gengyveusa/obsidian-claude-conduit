@@ -1,7 +1,7 @@
 ---
 title: "ADR-029: Phase 9 plan — Memory layer (CLAUDE.md cascade)"
 type: decision
-status: "Proposed (D1-D10 await batch acceptance)"
+status: "Accepted (D1-D10 batch-accepted 2026-05-14)"
 date: 2026-05-14
 ---
 
