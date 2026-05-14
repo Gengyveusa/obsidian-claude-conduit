@@ -203,6 +203,30 @@ export interface SagittariusSettings {
    */
   mcpWriteNotifyOnQueue: boolean;
 
+  // Phase 8 generative drafting (per ADR-026)
+  /**
+   * Per ADR-026 D4 — model used by `AnthropicDraftingEngine`. Opus
+   * 4.7 default because drafting is the quality-bias operation;
+   * users can downgrade to Sonnet if budget pressure dominates.
+   * Drafting cost flows through the same `BudgetTracker` as chat
+   * so users see the dollars in a single place.
+   */
+  draftingModel: 'claude-sonnet-4-6' | 'claude-opus-4-7' | 'claude-haiku-4-5-20251001';
+  /**
+   * Per ADR-026 D3 — citation contract enforcement. `'strict'` (every
+   * paragraph cites; retries once on violation), `'marked'` (uncited
+   * paragraphs must be wrapped in HTML comments; default), `'free'`
+   * (no contract).
+   */
+  citationPolicy: 'strict' | 'marked' | 'free';
+  /**
+   * Default destination folder for new drafts when the modal's
+   * "Destination folder" field is left blank. Per ADR-026 D1 (b)
+   * drafts land at `_drafts/<destination>/<slug>.md`. Empty string =
+   * drafts at the quarantine root.
+   */
+  draftsDefaultDestination: string;
+
   // Phase 7 curator (per ADR-022 D2, D6)
   /**
    * Master switch for the curator. When off, `Sagittarius: Run curator`
@@ -290,6 +314,10 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
   mcpHighRiskToolsEnabled: false,
   mcpWriteQueueTimeoutMs: 30_000,
   mcpWriteNotifyOnQueue: true,
+
+  draftingModel: 'claude-opus-4-7',
+  citationPolicy: 'marked',
+  draftsDefaultDestination: '10-Inbox',
 
   curatorEnabled: false,
   curatorMaxPerSweep: 20,

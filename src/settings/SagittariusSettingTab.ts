@@ -41,6 +41,7 @@ export class SagittariusSettingTab extends PluginSettingTab {
     this.renderActivitySection(containerEl);
     this.renderMcpSection(containerEl);
     this.renderMcpWriteSection(containerEl);
+    this.renderDraftingSection(containerEl);
     this.renderCuratorSection(containerEl);
     this.renderVoyageSection(containerEl);
   }
@@ -280,6 +281,75 @@ export class SagittariusSettingTab extends PluginSettingTab {
           this.plugin.settings.mcpWriteNotifyOnQueue = value;
           await this.plugin.saveSettings();
         }),
+      );
+  }
+
+  private renderDraftingSection(parent: HTMLElement): void {
+    parent.createEl('h3', { text: 'Generative drafting (Phase 8)' });
+    parent.createEl('p', {
+      cls: 'setting-item-description',
+      text:
+        'Sagittarius can draft cited markdown notes on demand per ADR-026. ' +
+        'Drafts land in the `_drafts/` quarantine folder and are promoted via ' +
+        '`Sagittarius: Promote draft`. The diff card per ADR-016 D2 still gates ' +
+        'every file write.',
+    });
+
+    new Setting(parent)
+      .setName('Drafting model')
+      .setDesc(
+        'Per ADR-026 D4 — Opus 4.7 default (drafting is the quality-bias operation). ' +
+          'Downgrade to Sonnet if budget pressure dominates.',
+      )
+      .addDropdown((dd) =>
+        dd
+          .addOption('claude-opus-4-7', 'Claude Opus 4.7 (best quality)')
+          .addOption('claude-sonnet-4-6', 'Claude Sonnet 4.6 (fast + cheaper)')
+          .addOption('claude-haiku-4-5-20251001', 'Claude Haiku 4.5 (cheapest)')
+          .setValue(this.plugin.settings.draftingModel)
+          .onChange(async (value) => {
+            this.plugin.settings.draftingModel =
+              value as typeof this.plugin.settings.draftingModel;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(parent)
+      .setName('Citation policy')
+      .setDesc(
+        'Per ADR-026 D3 — controls how the engine handles uncited synthesis prose. ' +
+          '`strict` rejects any uncited paragraph (retries once); `marked` (default) ' +
+          'requires `<!-- uncited -->` HTML comments around synthesis; `free` lets ' +
+          'uncited prose pass through unannotated.',
+      )
+      .addDropdown((dd) =>
+        dd
+          .addOption('strict', 'strict — every paragraph cites')
+          .addOption('marked', 'marked — uncited prose wrapped in comments (default)')
+          .addOption('free', 'free — no contract')
+          .setValue(this.plugin.settings.citationPolicy)
+          .onChange(async (value) => {
+            this.plugin.settings.citationPolicy =
+              value as typeof this.plugin.settings.citationPolicy;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(parent)
+      .setName('Default destination folder')
+      .setDesc(
+        'Vault-relative folder where new drafts land before promotion. The actual ' +
+          'draft path is `_drafts/<destination>/<slug>.md`. Default `10-Inbox`. The ' +
+          'modal\'s "Destination folder" field overrides this per-draft.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('10-Inbox')
+          .setValue(this.plugin.settings.draftsDefaultDestination)
+          .onChange(async (value) => {
+            this.plugin.settings.draftsDefaultDestination = value.trim();
+            await this.plugin.saveSettings();
+          }),
       );
   }
 
