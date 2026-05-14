@@ -1,6 +1,7 @@
 import { ItemView, Notice, type WorkspaceLeaf } from 'obsidian';
 
 import type SagittariusPlugin from '../main';
+import { isCuratorSuggestionKind } from '../main';
 import type { Suggestion, RouteSuggestion } from '../organization/types';
 
 export const SUGGESTIONS_VIEW_TYPE = 'sagittarius-suggestions';
@@ -341,6 +342,16 @@ export class SuggestionsView extends ItemView {
       notePath: s.notePath,
       bulk: false,
     });
+    // v1.0.5 — ADR-022 D7: remember the skip for curator suggestions so
+    // the next sweep doesn't propose it again. Phase 5 kinds (`route`,
+    // `moc-add`) keep their per-note dedup via the queue and don't
+    // populate the store.
+    if (
+      isCuratorSuggestionKind(s.kind) &&
+      this.plugin.curatorSkipPatterns !== null
+    ) {
+      await this.plugin.curatorSkipPatterns.record(s.kind, s.notePath);
+    }
     await this.refresh();
   }
 
@@ -433,6 +444,12 @@ export class SuggestionsView extends ItemView {
         notePath: s.notePath,
         bulk: true,
       });
+      if (
+        isCuratorSuggestionKind(s.kind) &&
+        this.plugin.curatorSkipPatterns !== null
+      ) {
+        await this.plugin.curatorSkipPatterns.record(s.kind, s.notePath);
+      }
     }
     new Notice(`Sagittarius: skipped ${snapshot.length} suggestion(s).`);
     await this.refresh();
