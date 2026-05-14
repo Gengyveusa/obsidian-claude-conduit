@@ -39,7 +39,117 @@ export class SagittariusSettingTab extends PluginSettingTab {
     this.renderWriteLayerSection(containerEl);
     this.renderOrganizationSection(containerEl);
     this.renderActivitySection(containerEl);
+    this.renderCuratorSection(containerEl);
     this.renderVoyageSection(containerEl);
+  }
+
+  private renderCuratorSection(parent: HTMLElement): void {
+    parent.createEl('h3', { text: 'Curator (Phase 7)' });
+    parent.createEl('p', {
+      cls: 'setting-item-description',
+      text:
+        'Proactive vault hygiene per ADR-022. Runs on demand via ' +
+        '`Cmd+P → Sagittarius: Run curator`. Ships two pure-rule ' +
+        'detectors in v1.0.0: broken wikilinks (severity 0.9) and ' +
+        'orphan stale notes (severity 0.4–0.8). Findings ride the ' +
+        'Phase 5 suggestion queue + Phase 4 diff card.',
+    });
+
+    new Setting(parent)
+      .setName('Enable curator')
+      .setDesc(
+        'When on, `Run curator` builds an orchestrator with the enabled rules and ' +
+          'sweeps the vault. Off = command surfaces a Notice and exits.',
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.curatorEnabled).onChange(async (value) => {
+          this.plugin.settings.curatorEnabled = value;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(parent)
+      .setName('Maximum suggestions per sweep')
+      .setDesc(
+        'Per-sweep enqueue cap (suggestion-fatigue mitigation per ADR-022 D6). ' +
+          'Orchestrator severity-ranks all findings and keeps the top N. Default 20.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('20')
+          .setValue(String(this.plugin.settings.curatorMaxPerSweep))
+          .onChange(async (value) => {
+            const trimmed = value.trim();
+            if (trimmed === '') {
+              return;
+            }
+            const n = parseInt(trimmed, 10);
+            if (!Number.isFinite(n) || n <= 0 || String(n) !== trimmed) {
+              new Notice('Sagittarius: maxPerSweep must be a positive integer.');
+              return;
+            }
+            this.plugin.settings.curatorMaxPerSweep = n;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(parent)
+      .setName('Stale-note threshold (days)')
+      .setDesc(
+        'Days since last modification before the orphan rule considers a note stale. ' +
+          'Lower = more aggressive archive proposals. Default 90.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('90')
+          .setValue(String(this.plugin.settings.curatorStaleNoteThresholdDays))
+          .onChange(async (value) => {
+            const trimmed = value.trim();
+            if (trimmed === '') {
+              return;
+            }
+            const n = parseInt(trimmed, 10);
+            if (!Number.isFinite(n) || n <= 0 || String(n) !== trimmed) {
+              new Notice('Sagittarius: stale threshold must be a positive integer (days).');
+              return;
+            }
+            this.plugin.settings.curatorStaleNoteThresholdDays = n;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(parent)
+      .setName('Enable broken-link rule')
+      .setDesc('Detect wikilinks pointing to non-existent notes.')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.curatorEnabledRules['broken-link'] !== false)
+          .onChange(async (value) => {
+            this.plugin.settings.curatorEnabledRules = {
+              ...this.plugin.settings.curatorEnabledRules,
+              'broken-link': value,
+            };
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(parent)
+      .setName('Enable orphan rule')
+      .setDesc(
+        'Detect notes with zero inbound links and last-modified > the stale threshold above. ' +
+          'Skips `_archive/` and `_logs/` folders.',
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.curatorEnabledRules['orphan'] !== false)
+          .onChange(async (value) => {
+            this.plugin.settings.curatorEnabledRules = {
+              ...this.plugin.settings.curatorEnabledRules,
+              orphan: value,
+            };
+            await this.plugin.saveSettings();
+          }),
+      );
   }
 
   private renderActivitySection(parent: HTMLElement): void {

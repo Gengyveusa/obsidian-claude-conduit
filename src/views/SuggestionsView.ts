@@ -211,12 +211,29 @@ export class SuggestionsView extends ItemView {
       await this.refresh();
       return;
     }
-    // v1.0.0 Phase 7 kinds (broken-link-fix, archive-stale) — apply paths
-    // ship in v1.0.0 PR 3; for now the row renders but Apply is a no-op
-    // notice. Skip still works.
-    new Notice(
-      `Sagittarius: apply for ${s.kind} ships in v1.0.0 PR 3. Use Skip to dismiss for now.`,
-    );
+    if (s.kind === 'broken-link-fix') {
+      const result = await this.plugin.applyBrokenLinkFixSuggestion(s);
+      if (result === 'applied') {
+        new Notice(`Sagittarius: removed ${s.linkText} from ${s.notePath}`);
+      } else if (result === 'rejected') {
+        new Notice('Sagittarius: rejected in diff card — suggestion removed.');
+      } else {
+        new Notice('Sagittarius: apply did not complete — see console.');
+      }
+      await this.refresh();
+      return;
+    }
+    if (s.kind === 'archive-stale') {
+      const result = await this.plugin.applyArchiveStaleSuggestion(s);
+      if (result === 'applied') {
+        new Notice(`Sagittarius: archived ${s.notePath} → ${s.proposedFolder}`);
+      } else if (result === 'rejected') {
+        new Notice('Sagittarius: rejected in diff card — suggestion removed.');
+      } else {
+        new Notice('Sagittarius: apply did not complete — see console.');
+      }
+      await this.refresh();
+    }
   }
 
   private async handleSkip(s: Suggestion): Promise<void> {
@@ -269,32 +286,27 @@ export class SuggestionsView extends ItemView {
     let applied = 0;
     let rejected = 0;
     let errored = 0;
-    let unsupported = 0;
     for (const s of snapshot) {
-      let result: 'applied' | 'rejected' | 'error' | 'unsupported';
+      let result: 'applied' | 'rejected' | 'error';
       if (s.kind === 'moc-add') {
         result = await this.plugin.applyMocAddSuggestion(s);
       } else if (s.kind === 'route') {
         result = await this.plugin.applyRouteSuggestion(s);
+      } else if (s.kind === 'broken-link-fix') {
+        result = await this.plugin.applyBrokenLinkFixSuggestion(s);
       } else {
-        // v1.0.0 Phase 7 kinds — apply path lands in PR 3. Apply-all
-        // skips them silently for now (counted in the summary).
-        result = 'unsupported';
+        result = await this.plugin.applyArchiveStaleSuggestion(s);
       }
       if (result === 'applied') {
         applied += 1;
       } else if (result === 'rejected') {
         rejected += 1;
-      } else if (result === 'unsupported') {
-        unsupported += 1;
       } else {
         errored += 1;
       }
     }
-    const unsupportedTail =
-      unsupported > 0 ? `, ${unsupported} unsupported (v1.0.0 PR 3 lands their apply)` : '';
     new Notice(
-      `Sagittarius: applied ${applied}, rejected ${rejected}, errors ${errored}${unsupportedTail}.`,
+      `Sagittarius: applied ${applied}, rejected ${rejected}, errors ${errored}.`,
     );
     await this.refresh();
   }

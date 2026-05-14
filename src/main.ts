@@ -41,6 +41,11 @@ import type { SqliteEngine } from './retrieval/SqliteEngine';
 import { JsonActivityLog, type ActivityLog } from './activity/ActivityLog';
 import { SagittariusSettingTab } from './settings/SagittariusSettingTab';
 import { DEFAULT_SETTINGS, type SagittariusSettings } from './settings/types';
+import { CuratorOrchestrator } from './curator/CuratorOrchestrator';
+import { findingToSuggestion } from './curator/findingToSuggestion';
+import { makeBrokenLinkRule } from './curator/rules/BrokenLinkRule';
+import { makeOrphanRule } from './curator/rules/OrphanRule';
+import { VaultCorpus } from './curator/VaultCorpus';
 import { MocAddClassifier } from './organization/MocAddClassifier';
 import { MocDiscovery } from './organization/MocDiscovery';
 import { OrganizationClassifier } from './organization/OrganizationClassifier';
@@ -49,7 +54,12 @@ import {
   type VaultEventEmitter,
 } from './organization/OrganizationWatcher';
 import { JsonSuggestionQueue, type SuggestionQueue } from './organization/SuggestionQueue';
-import type { MocAddSuggestion, RouteSuggestion } from './organization/types';
+import type {
+  ArchiveStaleSuggestion,
+  BrokenLinkFixSuggestion,
+  MocAddSuggestion,
+  RouteSuggestion,
+} from './organization/types';
 import { ChatView, CHAT_VIEW_TYPE } from './views/ChatView';
 import { QuickQuestionModal } from './views/QuickQuestionModal';
 import { ActivityView, ACTIVITY_VIEW_TYPE } from './views/ActivityView';
@@ -203,6 +213,14 @@ export default class SagittariusPlugin extends Plugin {
       name: 'Organize inbox now',
       callback: () => {
         void this.runOrganizationSweep();
+      },
+    });
+
+    this.addCommand({
+      id: 'run-curator',
+      name: 'Run curator',
+      callback: () => {
+        void this.runCurator();
       },
     });
 
@@ -605,6 +623,203 @@ export default class SagittariusPlugin extends Plugin {
       });
       return 'error';
     }
+  }
+
+  /**
+   * Phase 7 (v1.0.0) — apply a broken-link-fix suggestion. Removes the
+   * `linkText` substring from the note's content via `patch_note`. Per
+   * ADR-022 D4 the apply tool is `patch_note`; per ADR-016 D2 every
+   * write still routes through the diff card.
+   */
+  async applyBrokenLinkFixSuggestion(
+    s: BrokenLinkFixSuggestion,
+  ): Promise<'applied' | 'rejected' | 'error'> {
+    if (this.suggestionQueue === null) {
+      new Notice('Sagittarius: organization engine is off.');
+      return 'error';
+    }
+    const bundle = await this.getAgentBundle();
+    if (bundle === null) {
+      new Notice('Sagittarius: set your Anthropic API key first.');
+      return 'error';
+    }
+    try {
+      const readResult = (await bundle.deps.tools.execute('read_note', {
+        path: s.notePath,
+      })) as { content: string; mtime: number; hash: string } | null;
+      if (readResult === null) {
+        new Notice(`Sagittarius: note not found at ${s.notePath}.`);
+        return 'error';
+      }
+      // Strip the broken link. patch_note does targeted find/replace via
+      // anchorText (per Phase 4); use the full linkText as the anchor.
+      const result = (await bundle.deps.tools.execute('patch_note', {
+        path: s.notePath,
+        anchorText: s.linkText,
+        replacement: '',
+        expectedMtime: readResult.mtime,
+        expectedHash: readResult.hash,
+      })) as { status: string; error?: string; reason?: string };
+      if (result.status === 'applied') {
+        await this.suggestionQueue.remove(s.id);
+        await this.activityLog?.record({
+          kind: 'suggestion.applied',
+          suggestionId: s.id,
+          suggestionKind: 'route',
+          notePath: s.notePath,
+          writeToolName: 'patch_note',
+        });
+        return 'applied';
+      }
+      if (result.status === 'rejected') {
+        await this.suggestionQueue.remove(s.id);
+        await this.activityLog?.record({
+          kind: 'suggestion.rejected',
+          suggestionId: s.id,
+          notePath: s.notePath,
+        });
+        return 'rejected';
+      }
+      console.warn(
+        `[sagittarius] apply broken-link-fix failed: ${result.error ?? result.reason ?? ''}`,
+      );
+      return 'error';
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[sagittarius] apply broken-link-fix threw: ${msg}`);
+      return 'error';
+    }
+  }
+
+  /**
+   * Phase 7 (v1.0.0) — apply an archive-stale suggestion. Moves the
+   * note into `_archive/<year>/`. Per ADR-022 D4 the apply tool is
+   * `move_note`; per ADR-016 D2 every write still routes through the
+   * diff card.
+   */
+  async applyArchiveStaleSuggestion(
+    s: ArchiveStaleSuggestion,
+  ): Promise<'applied' | 'rejected' | 'error'> {
+    if (this.suggestionQueue === null) {
+      new Notice('Sagittarius: organization engine is off.');
+      return 'error';
+    }
+    const bundle = await this.getAgentBundle();
+    if (bundle === null) {
+      new Notice('Sagittarius: set your Anthropic API key first.');
+      return 'error';
+    }
+    const basename = s.notePath.split('/').pop() ?? s.notePath;
+    const toPath = `${s.proposedFolder}/${basename}`;
+    try {
+      const result = (await bundle.deps.tools.execute('move_note', {
+        fromPath: s.notePath,
+        toPath,
+      })) as { status: string; error?: string; reason?: string };
+      if (result.status === 'applied') {
+        await this.suggestionQueue.remove(s.id);
+        await this.activityLog?.record({
+          kind: 'suggestion.applied',
+          suggestionId: s.id,
+          suggestionKind: 'route',
+          notePath: s.notePath,
+          writeToolName: 'move_note',
+        });
+        return 'applied';
+      }
+      if (result.status === 'rejected') {
+        await this.suggestionQueue.remove(s.id);
+        await this.activityLog?.record({
+          kind: 'suggestion.rejected',
+          suggestionId: s.id,
+          notePath: s.notePath,
+        });
+        return 'rejected';
+      }
+      console.warn(
+        `[sagittarius] apply archive-stale failed: ${result.error ?? result.reason ?? ''}`,
+      );
+      return 'error';
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[sagittarius] apply archive-stale threw: ${msg}`);
+      return 'error';
+    }
+  }
+
+  /**
+   * Phase 7 (v1.0.0) — `Sagittarius: Run curator` command. Builds a
+   * fresh orchestrator with the user's enabled rules, runs a sweep,
+   * converts findings into Suggestions, enqueues them via the Phase 5
+   * SuggestionQueue. Refreshes the panel + status bar. Surfaces a
+   * single-line Notice with the counts.
+   */
+  async runCurator(): Promise<void> {
+    if (!this.settings.curatorEnabled) {
+      new Notice('Sagittarius: curator is off. Enable in settings.');
+      return;
+    }
+    if (this.suggestionQueue === null) {
+      new Notice('Sagittarius: organization engine is off — curator needs the suggestion queue.');
+      return;
+    }
+    const adapter = new VaultAdapterImpl(this.app);
+    const cache = new MetadataCacheImpl(this.app);
+    const corpus = new VaultCorpus(adapter, cache);
+    const orchestrator = new CuratorOrchestrator({ corpus });
+
+    const rules = this.settings.curatorEnabledRules;
+    if (rules['broken-link'] !== false) {
+      orchestrator.register(makeBrokenLinkRule());
+    }
+    if (rules['orphan'] !== false) {
+      orchestrator.register(
+        makeOrphanRule({ staleThresholdDays: this.settings.curatorStaleNoteThresholdDays }),
+      );
+    }
+
+    if (orchestrator.registeredRuleNames().length === 0) {
+      new Notice('Sagittarius: no curator rules enabled — nothing to do.');
+      return;
+    }
+
+    new Notice('Sagittarius: running curator…');
+    const outcome = await orchestrator.run({ maxPerSweep: this.settings.curatorMaxPerSweep });
+
+    let enqueuedCount = 0;
+    for (const finding of outcome.enqueued) {
+      const suggestion = findingToSuggestion(finding);
+      if (suggestion === null) {
+        continue;
+      }
+      const added = await this.suggestionQueue.add(suggestion);
+      if (added) {
+        enqueuedCount += 1;
+        // Activity-stream `suggestionKind` is the v0.8.0 enum (`route` /
+        // `moc-add`); v1.0.0 kinds map onto `route` since their apply
+        // paths are write-style. PR 4 may widen this enum.
+        let target = '';
+        if (suggestion.kind === 'broken-link-fix') {
+          target = suggestion.brokenTarget;
+        } else if (suggestion.kind === 'archive-stale') {
+          target = suggestion.proposedFolder;
+        }
+        await this.activityLog?.record({
+          kind: 'suggestion.enqueued',
+          suggestionId: suggestion.id,
+          suggestionKind: 'route',
+          notePath: suggestion.notePath,
+          target,
+          confidence: suggestion.confidence,
+        });
+      }
+    }
+
+    new Notice(
+      `Sagittarius: curator found ${outcome.totalDetected}, enqueued ${enqueuedCount}, ` +
+        `capped ${outcome.capped}, errors ${outcome.errors.length}.`,
+    );
+    await this.refreshSuggestionsView();
   }
 
   /** Re-render the SuggestionsView + ActivityView if open; refresh the status bar. */
