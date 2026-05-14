@@ -95,6 +95,7 @@ import { UndoConfirmModal } from './views/UndoConfirmModal';
 import { AnthropicDraftingEngine, draftToFileContent } from './drafts/DraftingEngine';
 import { DraftStore } from './drafts/DraftStore';
 import { promotedPathFor } from './drafts/paths';
+import { LiveMemoryProvider } from './memory/LiveMemoryProvider';
 import { CallbackApprovalGate } from './writes/CallbackApprovalGate';
 import { ExternalProposalQueue } from './writes/ExternalProposalQueue';
 import { JsonTransactionLog } from './writes/TransactionLog';
@@ -174,6 +175,16 @@ export default class SagittariusPlugin extends Plugin {
    * `VaultAdapter` is available; `null` before that.
    */
   draftStore: DraftStore | null = null;
+  /**
+   * Phase 9 (v1.3.0) — CLAUDE.md cascade per ADR-029. Constructed
+   * lazily on first `getAgentBundle()` call (needs the API key for
+   * the bundle to exist; provider itself only needs the adapter +
+   * settings accessors). The status bar pill and chat footer read
+   * `this.memoryProvider.lastResult` to render the most recent
+   * cascade.
+   */
+  memoryProvider: LiveMemoryProvider | null = null;
+  private memoryStatusBarEl: HTMLElement | null = null;
   /**
    * Phase 8 (v1.2.0) — status bar pill showing the count of files
    * under `_drafts/` per ADR-026 D5 (a). Created in `onload`;
@@ -418,6 +429,30 @@ export default class SagittariusPlugin extends Plugin {
     this.registerEvent(this.app.vault.on('create', pillRefresh));
     this.registerEvent(this.app.vault.on('delete', pillRefresh));
     this.registerEvent(this.app.vault.on('rename', pillRefresh));
+
+    // Phase 9 (v1.3.0) — memory status bar pill per ADR-029 D7.
+    // Shows the cascade size for the currently-active file at a
+    // glance; click opens a modal listing what would load if the
+    // user sent a chat right now.
+    this.memoryStatusBarEl = this.addStatusBarItem();
+    this.memoryStatusBarEl.addClass('sagittarius-status-bar');
+    this.memoryStatusBarEl.style.cursor = 'pointer';
+    this.memoryStatusBarEl.setAttribute(
+      'aria-label',
+      'Sagittarius memory — click for cascade preview',
+    );
+    this.memoryStatusBarEl.addEventListener('click', () => {
+      void this.openMemoryPreviewModal();
+    });
+    void this.refreshMemoryStatusBar();
+    const memoryRefresh = (): void => {
+      void this.refreshMemoryStatusBar();
+    };
+    this.registerEvent(this.app.vault.on('create', memoryRefresh));
+    this.registerEvent(this.app.vault.on('modify', memoryRefresh));
+    this.registerEvent(this.app.vault.on('delete', memoryRefresh));
+    this.registerEvent(this.app.vault.on('rename', memoryRefresh));
+    this.registerEvent(this.app.workspace.on('active-leaf-change', memoryRefresh));
 
     let lastQueueSize = 0;
     this.externalProposalsQueueUnsubscribe = this.externalProposalQueue.onChange(() => {
@@ -947,6 +982,101 @@ export default class SagittariusPlugin extends Plugin {
     }
     await leaf.setViewState({ type: ACTIVITY_VIEW_TYPE, active: true });
     await this.app.workspace.revealLeaf(leaf);
+  }
+
+  /**
+   * Phase 9 (v1.3.0) — render the memory status bar pill per
+   * ADR-029 D7. Pill shows "memory: NKB" when files would load,
+   * "memory: none" when the cascade is empty, or "memory: off"
+   * when the setting is disabled. Reads via the provider's
+   * `preview()` so it doesn't pollute the agent's `lastResult`.
+   */
+  private async refreshMemoryStatusBar(): Promise<void> {
+    const el = this.memoryStatusBarEl;
+    if (el === null) {
+      return;
+    }
+    if (!this.settings.memoryEnabled) {
+      el.setText('memory: off');
+      return;
+    }
+    // No provider yet (no API key) — show a placeholder that's
+    // identical to the enabled-empty state so the pill doesn't
+    // jiggle when the user later sets the key.
+    if (this.memoryProvider === null) {
+      el.setText('memory: —');
+      return;
+    }
+    try {
+      const result = await this.memoryProvider.preview();
+      if (result.sections.length === 0) {
+        el.setText('memory: none');
+        return;
+      }
+      const kb = result.totalBytes < 1024
+        ? `${result.totalBytes}B`
+        : `${(result.totalBytes / 1024).toFixed(1)}KB`;
+      const marker = result.budgetHit ? ' ⚠' : '';
+      el.setText(`memory: ${kb}${marker}`);
+    } catch {
+      el.setText('memory: err');
+    }
+  }
+
+  /**
+   * Phase 9 (v1.3.0) — open a modal listing which CLAUDE.md files
+   * the cascade would load right now, with byte counts and
+   * truncation indicators. Click-triggered from the status bar pill
+   * per ADR-029 D7.
+   */
+  private async openMemoryPreviewModal(): Promise<void> {
+    const { Modal } = await import('obsidian');
+    if (this.memoryProvider === null) {
+      new Notice(
+        'Sagittarius: memory provider not ready — set an API key in Settings first.',
+      );
+      return;
+    }
+    const result = await this.memoryProvider.preview();
+    const modal = new Modal(this.app);
+    modal.titleEl.setText('Sagittarius — memory cascade preview');
+    const { contentEl } = modal;
+    contentEl.empty();
+    contentEl.createEl('p', {
+      cls: 'setting-item-description',
+      text:
+        'These are the `CLAUDE.md` files Sagittarius would load if you ' +
+        'sent a chat right now. Files load in vault-root-first order; ' +
+        'edit any file to update its contents on the next turn.',
+    });
+    if (result.sections.length === 0) {
+      contentEl.createEl('p', {
+        text: this.settings.memoryEnabled
+          ? 'No `CLAUDE.md` files match the current cascade. Create one at the vault root to start.'
+          : 'Memory loading is OFF. Enable it in Settings → Sagittarius → Memory.',
+      });
+    } else {
+      const list = contentEl.createEl('ul');
+      for (const section of result.sections) {
+        const li = list.createEl('li');
+        const bytes = section.text.length < 1024
+          ? `${section.text.length}B`
+          : `${(section.text.length / 1024).toFixed(1)}KB`;
+        const tag = section.truncated ? ' (truncated)' : '';
+        li.setText(`${section.path} — ${bytes}${tag}`);
+      }
+      const total = result.totalBytes < 1024
+        ? `${result.totalBytes}B`
+        : `${(result.totalBytes / 1024).toFixed(1)}KB`;
+      contentEl.createEl('p', { text: `Total: ${total} / ${this.settings.memoryMaxBytes}B budget` });
+      if (result.budgetHit) {
+        contentEl.createEl('p', {
+          cls: 'mod-warning',
+          text: 'Budget cap hit — some content was truncated. Raise the cap in Settings or tighten your `CLAUDE.md` files.',
+        });
+      }
+    }
+    modal.open();
   }
 
   /** Open the drafts side panel (creates a leaf if missing). */
@@ -2242,6 +2372,19 @@ export default class SagittariusPlugin extends Plugin {
       dangerouslyAllowBrowser: true,
     });
 
+    // Phase 9 (v1.3.0) — CLAUDE.md cascade per ADR-029. The provider
+    // is constructed once per bundle but reads settings + workspace
+    // state on every `collect()` so live toggles + active-file
+    // changes take effect immediately (D6).
+    if (this.memoryProvider === null) {
+      this.memoryProvider = new LiveMemoryProvider({
+        adapter,
+        app: this.app,
+        getEnabled: () => this.settings.memoryEnabled,
+        getMaxBytes: () => this.settings.memoryMaxBytes,
+      });
+    }
+
     const agentDeps: ConstructorParameters<typeof ConduitAgent>[0] = {
       messages: client.messages,
       tools,
@@ -2249,6 +2392,7 @@ export default class SagittariusPlugin extends Plugin {
       logger,
       systemPromptParts,
       ctx: writeCtx,
+      memoryProvider: this.memoryProvider,
     };
     if (retrieval) {
       agentDeps.retrieval = retrieval;

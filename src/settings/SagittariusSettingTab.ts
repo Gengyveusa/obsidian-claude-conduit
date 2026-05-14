@@ -42,8 +42,55 @@ export class SagittariusSettingTab extends PluginSettingTab {
     this.renderMcpSection(containerEl);
     this.renderMcpWriteSection(containerEl);
     this.renderDraftingSection(containerEl);
+    this.renderMemorySection(containerEl);
     this.renderCuratorSection(containerEl);
     this.renderVoyageSection(containerEl);
+  }
+
+  private renderMemorySection(parent: HTMLElement): void {
+    parent.createEl('h3', { text: 'Memory (Phase 9)' });
+    parent.createEl('p', {
+      cls: 'setting-item-description',
+      text:
+        'Sagittarius loads `CLAUDE.md` files from the vault root + every ' +
+        'ancestor folder of the currently-active file at every chat turn, ' +
+        'per ADR-029. The status bar pill ("memory: …") shows the live cascade size. ' +
+        'Memory writes use the existing diff card — agent proposes via `append_to_note` / ' +
+        '`patch_note` like any other write.',
+    });
+
+    new Setting(parent)
+      .setName('Enable memory cascade')
+      .setDesc(
+        'When off, no `CLAUDE.md` files are injected regardless of which ' +
+          'exist in the vault. Status bar pill shows "memory: off".',
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.memoryEnabled).onChange(async (value) => {
+          this.plugin.settings.memoryEnabled = value;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(parent)
+      .setName('Memory budget (bytes)')
+      .setDesc(
+        'Total cap on injected `CLAUDE.md` text per turn per ADR-029 D4. ' +
+          'When the cap is exceeded, the file that crosses it is soft-truncated and ' +
+          'later files are skipped. Default 50,000 (~12K tokens).',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('50000')
+          .setValue(String(this.plugin.settings.memoryMaxBytes))
+          .onChange(async (value) => {
+            const parsed = parseInt(value, 10);
+            if (Number.isFinite(parsed) && parsed > 0) {
+              this.plugin.settings.memoryMaxBytes = parsed;
+              await this.plugin.saveSettings();
+            }
+          }),
+      );
   }
 
   private renderMcpSection(parent: HTMLElement): void {

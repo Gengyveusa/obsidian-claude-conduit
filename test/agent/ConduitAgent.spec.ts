@@ -496,6 +496,91 @@ describe('ConduitAgent', () => {
       expect.arrayContaining(['a.md', 'docs/x.md', 'docs/y.md']),
     );
   });
+
+  // Phase 9 (v1.3.0) — memory injection per ADR-029.
+  describe('memory cascade injection', () => {
+    function captureSystemBlocks(): {
+      deps: ConduitAgentDeps;
+      received: MessageCreateParams[];
+    } {
+      const received: MessageCreateParams[] = [];
+      const { deps } = makeDeps({
+        messages: {
+          create: (p: MessageCreateParams) => {
+            received.push(p);
+            return Promise.resolve(
+              makeMessage({ stop_reason: 'end_turn', text: 'ok' }),
+            );
+          },
+        },
+      });
+      return { deps, received };
+    }
+
+    it('injects a memory text block when the provider returns content', async () => {
+      const { deps, received } = captureSystemBlocks();
+      deps.memoryProvider = {
+        collect: () => Promise.resolve('# Memory: CLAUDE.md\n\nuse snake_case'),
+      };
+      const agent = new ConduitAgent(deps, settings);
+      await agent.chat('hi', [], 'chat');
+      const system = received[0].system;
+      expect(Array.isArray(system)).toBe(true);
+      const blocks = system as Array<{ type: string; text: string; cache_control?: unknown }>;
+      const memoryBlock = blocks.find((b) => b.text.startsWith('# Memory:'));
+      expect(memoryBlock).toBeDefined();
+      expect(memoryBlock?.cache_control).toEqual({ type: 'ephemeral' });
+      // Memory should sit between constitution and hangar voice.
+      const constitutionIdx = blocks.findIndex((b) => b.text === 'CONSTITUTION');
+      const memoryIdx = blocks.indexOf(memoryBlock!);
+      const hangarIdx = blocks.findIndex((b) => b.text === 'HANGAR');
+      expect(constitutionIdx).toBeLessThan(memoryIdx);
+      expect(memoryIdx).toBeLessThan(hangarIdx);
+    });
+
+    it('omits the memory block when the provider returns null', async () => {
+      const { deps, received } = captureSystemBlocks();
+      deps.memoryProvider = { collect: () => Promise.resolve(null) };
+      const agent = new ConduitAgent(deps, settings);
+      await agent.chat('hi', [], 'chat');
+      const blocks = received[0].system as Array<{ text: string }>;
+      const memoryBlock = blocks.find((b) => b.text.startsWith('# Memory:'));
+      expect(memoryBlock).toBeUndefined();
+    });
+
+    it('omits the memory block when no provider is configured', async () => {
+      const { deps, received } = captureSystemBlocks();
+      // intentionally NOT setting memoryProvider
+      const agent = new ConduitAgent(deps, settings);
+      await agent.chat('hi', [], 'chat');
+      const blocks = received[0].system as Array<{ text: string }>;
+      const memoryBlock = blocks.find((b) => b.text.startsWith('# Memory:'));
+      expect(memoryBlock).toBeUndefined();
+    });
+
+    it('degrades to no-memory when the provider throws (turn does not fail)', async () => {
+      const { deps, received } = captureSystemBlocks();
+      deps.memoryProvider = {
+        collect: () => Promise.reject(new Error('disk is on fire')),
+      };
+      const agent = new ConduitAgent(deps, settings);
+      const result = await agent.chat('hi', [], 'chat');
+      expect(result.finalText).toBe('ok');
+      const blocks = received[0].system as Array<{ text: string }>;
+      const memoryBlock = blocks.find((b) => b.text.startsWith('# Memory:'));
+      expect(memoryBlock).toBeUndefined();
+    });
+
+    it('omits the memory block when the provider returns an empty string', async () => {
+      const { deps, received } = captureSystemBlocks();
+      deps.memoryProvider = { collect: () => Promise.resolve('') };
+      const agent = new ConduitAgent(deps, settings);
+      await agent.chat('hi', [], 'chat');
+      const blocks = received[0].system as Array<{ text: string }>;
+      const memoryBlock = blocks.find((b) => b.text.startsWith('# Memory:'));
+      expect(memoryBlock).toBeUndefined();
+    });
+  });
 });
 
 describe('isOverloaded()', () => {

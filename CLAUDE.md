@@ -6,34 +6,35 @@ This file orients a Claude Code session opened against this repo. Substrate ques
 
 - **Name:** Sagittarius — Claude Conduit (`obsidian-claude-conduit`)
 - **What:** Native Obsidian plugin. Chat with your vault, retrieval-grounded.
-- **Status:** v1.2.0 — Phase 8 closed (ADR-028). Generative drafting MVP + drafts management panel ship together. `Sagittarius: New draft` → `NewDraftModal` → retrieval-grounded `AnthropicDraftingEngine` → `create_note` via the existing diff card → file lands at `_drafts/<destination>/<slug>.md` with inline `[[]]` citations + `cited_chunks: [...]` frontmatter. New `DraftsView` right-rail side panel lists every file under `_drafts/` with Open/Promote/Discard buttons; new status bar pill ("Sagittarius: N drafts") hides when empty. `Sagittarius: Promote draft` strips the `_drafts/` prefix via `move_note`. Three new settings: `draftingModel` (Opus 4.7 default per D4), `citationPolicy` (`marked` default per D3 — uncited prose wrapped in `<!-- uncited -->` comments), `draftsDefaultDestination` (`10-Inbox` default). **Zero new write tools, zero new diff-card variants, zero new transaction shapes** — Phase 8 composes existing primitives per D9 (a). 993 tests (+62 since Phase 6.7 close). ChatView Draft mode (D5 (d) + D6 (c)) deferred to v1.2.x patch. Phase 8 done; Phase 9 (memory layer) is next. The MCP bridge now exposes 5 read tools always, 9 write tools when `mcpWriteEnabled`, plus `delete_note` behind a second toggle. The diff-card-focus problem (deferred by ADR-023 lesson 2 → solved + closed ~24 h later) is fully solved for the user-not-at-Obsidian case via `ExternalProposalQueue` + side panel + status bar pill + native OS `Notification`. McpHandler races `registry.execute` against `mcpWriteQueueTimeoutMs` (default 30 s); on timeout the MCP response returns `queued` while the underlying tool keeps running and commits when the user approves later. ADR-025 OQ1 settled: side-panel Approve resolves directly (inline diff preview makes a re-opened modal redundant). The in-app-chat-concurrent case returns "retry shortly" — accepted limitation per ADR-027 lesson 2. 931 tests. Phase 6.7 done; ADR-026 (Phase 8 — generative layer) MVP at v1.2.0 is next.
+- **Status:** v1.3.0 — Phase 9 MVP per ADR-029. New `src/memory/` package: `MemoryCascade.ts` (pure — `collectMemory`, `candidateCascadePaths`, `formatMemoryPromptText`, `formatMemoryFooter`; root + every ancestor folder of the active file per D2; soft-truncate at 50KB per D4), `LiveMemoryProvider.ts` (plugin-side `MemoryProvider` impl reading the workspace's active file per turn per D6, with `preview()` for UI without polluting `lastResult`). `ConduitAgent` gains an optional `memoryProvider` dep; `buildSystemPrompt` inserts the memory block between constitution and hangarVoice with its own `cache_control: ephemeral` breakpoint per D5 so CLAUDE.md edits don't invalidate the constitution cache. Provider errors degrade to "no memory" rather than failing the turn. Status bar pill ("memory: 2.1KB" / "memory: none" / "memory: off") click opens a preview modal listing the cascade. ChatView response footer gains a memory line ("memory: 2.1KB from CLAUDE.md, 30-Projects/CLAUDE.md") via the provider's `lastResult`. Two new settings: `memoryEnabled` (default true), `memoryMaxBytes` (default 50_000). **Zero new write tools** — agent proposes memory edits via existing `append_to_note` / `patch_note` per ADR-029 D8 (echoes ADR-028 lesson 2). 1027 tests (+34). Phase 9 stays open at v1.3.0; close (ADR-???) lands as a later v1.3.x after the cascade is exercised in real use. Phase 8 closed yesterday (ADR-028). Generative drafting MVP + drafts management panel ship together. `Sagittarius: New draft` → `NewDraftModal` → retrieval-grounded `AnthropicDraftingEngine` → `create_note` via the existing diff card → file lands at `_drafts/<destination>/<slug>.md` with inline `[[]]` citations + `cited_chunks: [...]` frontmatter. New `DraftsView` right-rail side panel lists every file under `_drafts/` with Open/Promote/Discard buttons; new status bar pill ("Sagittarius: N drafts") hides when empty. `Sagittarius: Promote draft` strips the `_drafts/` prefix via `move_note`. Three new settings: `draftingModel` (Opus 4.7 default per D4), `citationPolicy` (`marked` default per D3 — uncited prose wrapped in `<!-- uncited -->` comments), `draftsDefaultDestination` (`10-Inbox` default). **Zero new write tools, zero new diff-card variants, zero new transaction shapes** — Phase 8 composes existing primitives per D9 (a). 993 tests (+62 since Phase 6.7 close). ChatView Draft mode (D5 (d) + D6 (c)) deferred to v1.2.x patch. Phase 8 done; Phase 9 (memory layer) is next. The MCP bridge now exposes 5 read tools always, 9 write tools when `mcpWriteEnabled`, plus `delete_note` behind a second toggle. The diff-card-focus problem (deferred by ADR-023 lesson 2 → solved + closed ~24 h later) is fully solved for the user-not-at-Obsidian case via `ExternalProposalQueue` + side panel + status bar pill + native OS `Notification`. McpHandler races `registry.execute` against `mcpWriteQueueTimeoutMs` (default 30 s); on timeout the MCP response returns `queued` while the underlying tool keeps running and commits when the user approves later. ADR-025 OQ1 settled: side-panel Approve resolves directly (inline diff preview makes a re-opened modal redundant). The in-app-chat-concurrent case returns "retry shortly" — accepted limitation per ADR-027 lesson 2. 931 tests. Phase 6.7 done; ADR-026 (Phase 8 — generative layer) MVP at v1.2.0 is next.
 - **Build pattern:** `pair-via-claude-code` per [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) (ADR-010). Thad decides; Claude implements.
 
 ## Read first (in this order)
 
-1. [`docs/2026-05-14-phase-8-close.md`](docs/2026-05-14-phase-8-close.md) — ADR-028, Phase 8 retrospective (two lessons; drafting MVP + drafts panel shipped).
-2. [`docs/2026-05-14-phase-6.7-close.md`](docs/2026-05-14-phase-6.7-close.md) — ADR-027, Phase 6.7 retrospective (two lessons; diff-card-focus problem solved).
-3. [`docs/2026-05-14-adr-025-phase-6.7-mcp-write-side-plan.md`](docs/2026-05-14-adr-025-phase-6.7-mcp-write-side-plan.md) — ADR-025, Phase 6.7 MCP write-side plan (10 decisions, all accepted; OQ1 settled in implementation).
-4. [`docs/2026-05-14-adr-026-phase-8-generative-layer-plan.md`](docs/2026-05-14-adr-026-phase-8-generative-layer-plan.md) — ADR-026, Phase 8 generative layer plan (10 decisions, all accepted; OQ1-OQ3 deferred to v1.2.x).
-5. [`docs/2026-05-14-phase-7-close.md`](docs/2026-05-14-phase-7-close.md) — ADR-024, Phase 7 retrospective (two lessons; first v1.x release).
-6. [`docs/2026-05-14-phase-6.5-close.md`](docs/2026-05-14-phase-6.5-close.md) — ADR-023, Phase 6.5 retrospective (two lessons + write-side-deferred).
-7. [`docs/2026-05-13-adr-021-phase-6.5-mcp-bridge-plan.md`](docs/2026-05-13-adr-021-phase-6.5-mcp-bridge-plan.md) — ADR-021, Phase 6.5 plan (MCP bridge; 9 decisions, all accepted).
-8. [`docs/2026-05-13-adr-022-phase-7-curator-plan.md`](docs/2026-05-13-adr-022-phase-7-curator-plan.md) — ADR-022, Phase 7 plan (Curator; 10 decisions, all accepted).
-9. [`docs/2026-05-13-phase-6-close.md`](docs/2026-05-13-phase-6-close.md) — ADR-020, Phase 6 retrospective.
-10. [`docs/2026-05-12-adr-019-phase-6-plan.md`](docs/2026-05-12-adr-019-phase-6-plan.md) — ADR-019, Phase 6 plan (Activity Stream; MCP bridge split out, now ADR-021).
-11. [`docs/2026-05-12-phase-5-close.md`](docs/2026-05-12-phase-5-close.md) — ADR-018, Phase 5 retrospective.
-12. [`docs/2026-05-11-adr-017-phase-5-plan.md`](docs/2026-05-11-adr-017-phase-5-plan.md) — ADR-017, Phase 5 plan.
-13. [`docs/2026-05-10-adr-016-phase-4-plan.md`](docs/2026-05-10-adr-016-phase-4-plan.md) — ADR-016, Phase 4 plan (D1-D6 + prereqs).
-14. [`docs/2026-05-09-phase-3-close.md`](docs/2026-05-09-phase-3-close.md) — ADR-014, Phase 3 retrospective.
-15. [`docs/2026-05-10-adr-015-vault-adapter-audit.md`](docs/2026-05-10-adr-015-vault-adapter-audit.md) — ADR-015, VaultAdapter audit findings + Phase 4 prereqs.
-16. [`docs/02_SPEC.md`](docs/02_SPEC.md) — v0.1 spec (binding).
-17. [`docs/03_PACKAGE_JSON.md`](docs/03_PACKAGE_JSON.md) — dependency rationale.
-18. [`docs/04_MANIFEST_JSON.md`](docs/04_MANIFEST_JSON.md) — Obsidian manifest fields.
-19. [`docs/05_CONDUIT_AGENT_SKETCH.md`](docs/05_CONDUIT_AGENT_SKETCH.md) — agent class shape.
-20. [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) — ADR-010 (process).
-21. [`docs/embed_interface.md`](docs/embed_interface.md) — embedding contract v1 (shared with corpus-ingest).
-22. [`docs/THAD_MAN.md`](docs/THAD_MAN.md) — vault constitution; loaded into the agent's system prompt at runtime.
-23. [`docs/concierge.md`](docs/concierge.md) — Hangar voice; loaded into the agent's system prompt.
+1. [`docs/2026-05-14-adr-029-phase-9-memory-plan.md`](docs/2026-05-14-adr-029-phase-9-memory-plan.md) — ADR-029, Phase 9 plan (memory layer; 10 decisions, all accepted; 3 OQs open).
+2. [`docs/2026-05-14-phase-8-close.md`](docs/2026-05-14-phase-8-close.md) — ADR-028, Phase 8 retrospective (two lessons; drafting MVP + drafts panel shipped).
+3. [`docs/2026-05-14-phase-6.7-close.md`](docs/2026-05-14-phase-6.7-close.md) — ADR-027, Phase 6.7 retrospective (two lessons; diff-card-focus problem solved).
+4. [`docs/2026-05-14-adr-025-phase-6.7-mcp-write-side-plan.md`](docs/2026-05-14-adr-025-phase-6.7-mcp-write-side-plan.md) — ADR-025, Phase 6.7 MCP write-side plan (10 decisions, all accepted; OQ1 settled in implementation).
+5. [`docs/2026-05-14-adr-026-phase-8-generative-layer-plan.md`](docs/2026-05-14-adr-026-phase-8-generative-layer-plan.md) — ADR-026, Phase 8 generative layer plan (10 decisions, all accepted; OQ1-OQ3 deferred to v1.2.x).
+6. [`docs/2026-05-14-phase-7-close.md`](docs/2026-05-14-phase-7-close.md) — ADR-024, Phase 7 retrospective (two lessons; first v1.x release).
+7. [`docs/2026-05-14-phase-6.5-close.md`](docs/2026-05-14-phase-6.5-close.md) — ADR-023, Phase 6.5 retrospective (two lessons + write-side-deferred).
+8. [`docs/2026-05-13-adr-021-phase-6.5-mcp-bridge-plan.md`](docs/2026-05-13-adr-021-phase-6.5-mcp-bridge-plan.md) — ADR-021, Phase 6.5 plan (MCP bridge; 9 decisions, all accepted).
+9. [`docs/2026-05-13-adr-022-phase-7-curator-plan.md`](docs/2026-05-13-adr-022-phase-7-curator-plan.md) — ADR-022, Phase 7 plan (Curator; 10 decisions, all accepted).
+10. [`docs/2026-05-13-phase-6-close.md`](docs/2026-05-13-phase-6-close.md) — ADR-020, Phase 6 retrospective.
+11. [`docs/2026-05-12-adr-019-phase-6-plan.md`](docs/2026-05-12-adr-019-phase-6-plan.md) — ADR-019, Phase 6 plan (Activity Stream; MCP bridge split out, now ADR-021).
+12. [`docs/2026-05-12-phase-5-close.md`](docs/2026-05-12-phase-5-close.md) — ADR-018, Phase 5 retrospective.
+13. [`docs/2026-05-11-adr-017-phase-5-plan.md`](docs/2026-05-11-adr-017-phase-5-plan.md) — ADR-017, Phase 5 plan.
+14. [`docs/2026-05-10-adr-016-phase-4-plan.md`](docs/2026-05-10-adr-016-phase-4-plan.md) — ADR-016, Phase 4 plan (D1-D6 + prereqs).
+15. [`docs/2026-05-09-phase-3-close.md`](docs/2026-05-09-phase-3-close.md) — ADR-014, Phase 3 retrospective.
+16. [`docs/2026-05-10-adr-015-vault-adapter-audit.md`](docs/2026-05-10-adr-015-vault-adapter-audit.md) — ADR-015, VaultAdapter audit findings + Phase 4 prereqs.
+17. [`docs/02_SPEC.md`](docs/02_SPEC.md) — v0.1 spec (binding).
+18. [`docs/03_PACKAGE_JSON.md`](docs/03_PACKAGE_JSON.md) — dependency rationale.
+19. [`docs/04_MANIFEST_JSON.md`](docs/04_MANIFEST_JSON.md) — Obsidian manifest fields.
+20. [`docs/05_CONDUIT_AGENT_SKETCH.md`](docs/05_CONDUIT_AGENT_SKETCH.md) — agent class shape.
+21. [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) — ADR-010 (process).
+22. [`docs/embed_interface.md`](docs/embed_interface.md) — embedding contract v1 (shared with corpus-ingest).
+23. [`docs/THAD_MAN.md`](docs/THAD_MAN.md) — vault constitution; loaded into the agent's system prompt at runtime.
+24. [`docs/concierge.md`](docs/concierge.md) — Hangar voice; loaded into the agent's system prompt.
 
 ## Decision authority hierarchy
 
@@ -72,7 +73,7 @@ When unsure (per ADR-010 §4):
 | 7 — Curator | proactive vault hygiene (broken links, orphans, stale, schema, duplicate, tag-normalize) | done (v1.0.0 MVP → v1.0.3 close; ADR-022, ADR-024) |
 | 6.7 — MCP write-side | expose write tools, gates, queue + side panel, OS notifications | done (v1.0.8 substrate → v1.0.9 exposure → v1.1.0 close; ADR-025, ADR-027) |
 | 8 — Generative layer | cited drafts, proposal quarantine, drafts panel | done (v1.1.1 MVP → v1.2.0 close; ADR-026, ADR-028) |
-| 9 — Memory layer | CLAUDE.md reader/writer, dossiers | future |
+| 9 — Memory layer | CLAUDE.md cascade (vault-root + ancestor folders) injected into system prompt; status bar + footer surfaces | MVP done (v1.3.0; ADR-029) — close TBD as v1.3.x |
 | 10 — Polish | commands, hotkeys, screenshots | future |
 | 11 — Release | tag, sign, BRAT-list, registry — **= v1.0** | future |
 

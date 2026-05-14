@@ -227,6 +227,24 @@ export interface SagittariusSettings {
    */
   draftsDefaultDestination: string;
 
+  // Phase 9 memory layer (per ADR-029 D5, D6)
+  /**
+   * Master switch for the CLAUDE.md cascade per ADR-029. When off,
+   * no memory is injected into the system prompt regardless of
+   * which `CLAUDE.md` files exist in the vault. Default true; the
+   * status bar pill ("memory off") signals the off state.
+   */
+  memoryEnabled: boolean;
+  /**
+   * Hard cap on the total bytes of CLAUDE.md text injected per turn
+   * per ADR-029 D4. Default 50_000 (~12K tokens). The file that
+   * pushes the running total over this cap is soft-truncated; any
+   * remaining files in the cascade are skipped. The operator sees
+   * a one-time `Notice` and the chat footer marker
+   * `(budget hit — truncated)` when this fires.
+   */
+  memoryMaxBytes: number;
+
   // Phase 7 curator (per ADR-022 D2, D6)
   /**
    * Master switch for the curator. When off, `Sagittarius: Run curator`
@@ -318,6 +336,9 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
   draftingModel: 'claude-opus-4-7',
   citationPolicy: 'marked',
   draftsDefaultDestination: '10-Inbox',
+
+  memoryEnabled: true,
+  memoryMaxBytes: 50_000,
 
   curatorEnabled: false,
   curatorMaxPerSweep: 20,

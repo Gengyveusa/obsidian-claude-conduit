@@ -48,6 +48,27 @@ export interface SystemPromptParts {
   hangarVoice: string;
 }
 
+/**
+ * Phase 9 (v1.3.0) — per-turn memory cascade per ADR-029 D6.
+ *
+ * Memory is re-read from disk on every chat turn (so operator edits
+ * to CLAUDE.md take effect immediately) but is NOT plumbed through
+ * `SystemPromptParts` — those are the cached, slow-changing static
+ * blocks. Memory is its own seam: the provider is async, called
+ * once per `chat()` invocation, and the result is passed to
+ * `buildSystemPrompt` as a parameter.
+ *
+ * Implementations return the pre-formatted prompt text (the labeled
+ * sections per D3) or `null` when nothing applies. Errors during
+ * resolution should be caught and logged by the provider — the
+ * agent treats a thrown provider as "no memory" rather than failing
+ * the turn.
+ */
+export interface MemoryProvider {
+  /** Return the memory block text for this turn, or `null` to skip. */
+  collect(): Promise<string | null>;
+}
+
 export interface ConduitAgentSettings {
   defaultModel: string;
   fallbackModel: string;
@@ -62,6 +83,13 @@ export interface ConduitAgentDeps {
   budget: BudgetTracker;
   logger: ConversationLogger;
   systemPromptParts: SystemPromptParts;
+  /**
+   * Phase 9 (v1.3.0) — CLAUDE.md cascade per ADR-029. Optional: if
+   * omitted, no memory block is injected. Called once per `chat()`
+   * invocation; thrown errors degrade to "no memory" with a warn-
+   * level log rather than failing the turn.
+   */
+  memoryProvider?: MemoryProvider;
   /**
    * Per-turn transaction lifecycle for Phase 4 write tools (ADR-016 D3).
    * `chat()` calls `ctx.begin()` before the tool-use loop and `ctx.end()`
@@ -124,8 +152,21 @@ export class ConduitAgent {
       // 1. vault-qa: one pre-retrieval pass to seed the system prompt.
       const retrieved = await this.preRetrieve(userMessage, mode);
 
+      // 1b. Phase 9 (v1.3.0) — collect memory cascade per ADR-029.
+      // Per-turn fetch per D6; provider errors degrade to "no memory"
+      // rather than failing the turn.
+      let memory: string | null = null;
+      if (this.deps.memoryProvider !== undefined) {
+        try {
+          memory = await this.deps.memoryProvider.collect();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`[sagittarius] memory provider failed: ${msg}`);
+        }
+      }
+
       // 2. Build the system prompt with cache breakpoints.
-      const system = this.buildSystemPrompt(retrieved, mode);
+      const system = this.buildSystemPrompt(retrieved, mode, memory);
 
       // 3. Compose the message stack.
       const messages: MessageParam[] = [
@@ -336,6 +377,7 @@ export class ConduitAgent {
   private buildSystemPrompt(
     retrieved: ConversationCitation[],
     mode: 'chat' | 'vault-qa',
+    memory: string | null,
   ): TextBlockParam[] {
     const modeAddendum =
       mode === 'vault-qa'
@@ -350,10 +392,18 @@ export class ConduitAgent {
         text: this.deps.systemPromptParts.constitution,
         cache_control: { type: 'ephemeral' },
       },
+    ];
+    if (memory !== null && memory.length > 0) {
+      // Own cache breakpoint per ADR-029 D5: operator edits to
+      // CLAUDE.md invalidate this block without dropping the
+      // constitution cache above.
+      blocks.push({ type: 'text', text: memory, cache_control: { type: 'ephemeral' } });
+    }
+    blocks.push(
       { type: 'text', text: this.deps.systemPromptParts.hangarVoice },
       { type: 'text', text: toolsHelp, cache_control: { type: 'ephemeral' } },
       { type: 'text', text: modeAddendum },
-    ];
+    );
 
     if (retrieved.length > 0) {
       const retrievedBlock =
