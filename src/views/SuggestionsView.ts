@@ -154,6 +154,11 @@ export class SuggestionsView extends ItemView {
     } else if (s.kind === 'broken-link-fix') {
       body.appendText(`  ✗  `);
       body.createEl('code', { text: s.linkText });
+    } else if (s.kind === 'add-frontmatter') {
+      body.appendText(`  +  `);
+      body.createEl('code', { text: s.missingFields.map((f) => `${f}:`).join(' ') });
+    } else if (s.kind === 'stale-review') {
+      body.appendText(`  (${s.staleDays}d)`);
     }
 
     const reason = row.createDiv({ cls: 'sagittarius-suggestion-reason' });
@@ -233,6 +238,38 @@ export class SuggestionsView extends ItemView {
         new Notice('Sagittarius: apply did not complete — see console.');
       }
       await this.refresh();
+      return;
+    }
+    if (s.kind === 'add-frontmatter') {
+      const result = await this.plugin.applyAddFrontmatterSuggestion(s);
+      if (result === 'applied') {
+        new Notice(
+          `Sagittarius: added ${s.missingFields.length} field(s) to ${s.notePath}`,
+        );
+      } else if (result === 'rejected') {
+        new Notice('Sagittarius: rejected in diff card — suggestion removed.');
+      } else {
+        new Notice('Sagittarius: apply did not complete — see console.');
+      }
+      await this.refresh();
+      return;
+    }
+    if (s.kind === 'stale-review') {
+      // v1.0.1 — informational suggestion. "Apply" opens the note in
+      // a new pane so the operator can review/extend/archive manually;
+      // queue entry is removed so the row doesn't keep nagging.
+      await this.plugin.app.workspace.openLinkText(s.notePath, '', false);
+      const queue = this.plugin.suggestionQueue;
+      if (queue !== null) {
+        await queue.remove(s.id);
+      }
+      await this.plugin.activityLog?.record({
+        kind: 'suggestion.skipped',
+        suggestionId: s.id,
+        notePath: s.notePath,
+        bulk: false,
+      });
+      await this.refresh();
     }
   }
 
@@ -294,8 +331,13 @@ export class SuggestionsView extends ItemView {
         result = await this.plugin.applyRouteSuggestion(s);
       } else if (s.kind === 'broken-link-fix') {
         result = await this.plugin.applyBrokenLinkFixSuggestion(s);
-      } else {
+      } else if (s.kind === 'archive-stale') {
         result = await this.plugin.applyArchiveStaleSuggestion(s);
+      } else if (s.kind === 'add-frontmatter') {
+        result = await this.plugin.applyAddFrontmatterSuggestion(s);
+      } else {
+        // stale-review — skip in bulk apply (no automated apply path).
+        result = 'rejected';
       }
       if (result === 'applied') {
         applied += 1;
@@ -357,5 +399,9 @@ export function kindLabel(kind: Suggestion['kind']): string {
       return '✗ Broken link';
     case 'archive-stale':
       return '📦 Archive stale';
+    case 'add-frontmatter':
+      return '＋ Frontmatter';
+    case 'stale-review':
+      return '⌛ Stale review';
   }
 }

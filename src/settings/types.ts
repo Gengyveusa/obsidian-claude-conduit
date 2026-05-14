@@ -163,6 +163,13 @@ export interface SagittariusSettings {
    * Set to `false` to disable a specific rule without touching others.
    */
   curatorEnabledRules: Record<string, boolean>;
+  /**
+   * v1.0.1 — per-folder frontmatter schema map. Key = folder prefix
+   * (e.g. `'22-Decisions'`); value = required field names. Notes in
+   * matching folders without all required fields produce
+   * `add-frontmatter` suggestions. Empty (default) = rule disabled.
+   */
+  curatorFolderSchemas: Record<string, string[]>;
 }
 
 export const DEFAULT_SETTINGS: SagittariusSettings = {
@@ -210,4 +217,5 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
   curatorMaxPerSweep: 20,
   curatorStaleNoteThresholdDays: 90,
   curatorEnabledRules: {},
+  curatorFolderSchemas: {},
 };

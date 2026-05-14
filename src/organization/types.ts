@@ -25,7 +25,9 @@ export type Suggestion =
   | RouteSuggestion
   | MocAddSuggestion
   | BrokenLinkFixSuggestion
-  | ArchiveStaleSuggestion;
+  | ArchiveStaleSuggestion
+  | AddFrontmatterSuggestion
+  | StaleReviewSuggestion;
 
 export interface RouteSuggestion {
   kind: 'route';
@@ -97,6 +99,42 @@ export interface ArchiveStaleSuggestion {
   /** Proposed destination folder (no trailing slash), e.g. `_archive/2025`. */
   proposedFolder: string;
   /** Days since last modification, surfaced in the panel row. */
+  staleDays: number;
+  reason: string;
+  confidence: number;
+  deferred?: boolean;
+}
+
+/**
+ * Phase 7 v1.0.1 — "this note is missing fields that the folder's
+ * schema requires." Apply runs `add_frontmatter` to insert the
+ * missing fields with empty values; the user fills them in.
+ */
+export interface AddFrontmatterSuggestion {
+  kind: 'add-frontmatter';
+  id: string;
+  createdAt: number;
+  notePath: string;
+  /** Folder-schema prefix the note matched. */
+  schemaPrefix: string;
+  /** Required fields that are missing. */
+  missingFields: string[];
+  reason: string;
+  confidence: number;
+  deferred?: boolean;
+}
+
+/**
+ * Phase 7 v1.0.1 — "this note hasn't been touched in N days. Review,
+ * archive, or extend the staleness threshold." Apply is informational
+ * only in v1.0.1 (the user opens the note and decides); v1.0.2 may
+ * extend with structured actions.
+ */
+export interface StaleReviewSuggestion {
+  kind: 'stale-review';
+  id: string;
+  createdAt: number;
+  notePath: string;
   staleDays: number;
   reason: string;
   confidence: number;

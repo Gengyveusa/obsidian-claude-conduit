@@ -1,11 +1,15 @@
 import type {
+  AddFrontmatterSuggestion,
   ArchiveStaleSuggestion,
   BrokenLinkFixSuggestion,
+  StaleReviewSuggestion,
   Suggestion,
 } from '../organization/types';
 
 import { BROKEN_LINK_RULE_NAME } from './rules/BrokenLinkRule';
+import { MISSING_FRONTMATTER_RULE_NAME } from './rules/MissingFrontmatterRule';
 import { ORPHAN_RULE_NAME } from './rules/OrphanRule';
+import { STALE_NOTE_RULE_NAME } from './rules/StaleNoteRule';
 import type { CuratorFinding } from './types';
 
 /**
@@ -74,6 +78,49 @@ export function findingToSuggestion(
         createdAt: Math.floor(timestamp / 1000),
         notePath: finding.notePath,
         proposedFolder: archiveFolder,
+        staleDays,
+        reason: finding.reason,
+        confidence: finding.severity,
+      };
+      return suggestion;
+    }
+    case MISSING_FRONTMATTER_RULE_NAME: {
+      const payload = finding.payload as
+        | { schemaPrefix?: unknown; missingFields?: unknown }
+        | undefined;
+      const schemaPrefix =
+        typeof payload?.schemaPrefix === 'string' ? payload.schemaPrefix : null;
+      const missingFields =
+        Array.isArray(payload?.missingFields) &&
+        payload.missingFields.every((f): f is string => typeof f === 'string')
+          ? payload.missingFields
+          : null;
+      if (schemaPrefix === null || missingFields === null || missingFields.length === 0) {
+        return null;
+      }
+      const suggestion: AddFrontmatterSuggestion = {
+        kind: 'add-frontmatter',
+        id,
+        createdAt: Math.floor(timestamp / 1000),
+        notePath: finding.notePath,
+        schemaPrefix,
+        missingFields,
+        reason: finding.reason,
+        confidence: finding.severity,
+      };
+      return suggestion;
+    }
+    case STALE_NOTE_RULE_NAME: {
+      const payload = finding.payload as { staleDays?: unknown } | undefined;
+      const staleDays = typeof payload?.staleDays === 'number' ? payload.staleDays : null;
+      if (staleDays === null) {
+        return null;
+      }
+      const suggestion: StaleReviewSuggestion = {
+        kind: 'stale-review',
+        id,
+        createdAt: Math.floor(timestamp / 1000),
+        notePath: finding.notePath,
         staleDays,
         reason: finding.reason,
         confidence: finding.severity,
