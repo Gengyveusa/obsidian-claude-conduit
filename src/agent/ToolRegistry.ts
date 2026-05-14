@@ -45,6 +45,15 @@ export class ToolRegistry {
   }
 
   /**
+   * Full `ToolDefinition[]` in registration order. Used by the MCP
+   * adapter (Phase 6.5 PR 3) to expose tools to external clients,
+   * and by any future code that wants to inspect the registry shape.
+   */
+  definitions(): ToolDefinition[] {
+    return [...this.tools.values()];
+  }
+
+  /**
    * Emit Anthropic-compatible tool definitions for the SDK's `tools` field.
    * @example client.messages.create({ tools: reg.schemas(), ... })
    */
