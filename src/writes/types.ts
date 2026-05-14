@@ -19,6 +19,15 @@ export interface Transaction {
   timestamp: number;
   /** Optional chat-session id that owned this turn. */
   sessionId?: string;
+  /**
+   * Origin attribution per ADR-025 D5. Set when a Transaction was opened
+   * by something other than the in-app chat. Conventional values:
+   * `'mcp:<clientInfo.name>'` for MCP-driven writes (Phase 6.7),
+   * `'mcp:unknown'` when the client did not identify itself. Omitted
+   * (`undefined`) for in-app chat-driven writes. Audit-only — no
+   * permission logic keys on this field.
+   */
+  source?: string;
   /** Ops in apply order. Undo replays inverse in reverse order. */
   ops: AppliedOp[];
 }

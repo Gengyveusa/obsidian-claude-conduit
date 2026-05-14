@@ -6,7 +6,7 @@ This file orients a Claude Code session opened against this repo. Substrate ques
 
 - **Name:** Sagittarius — Claude Conduit (`obsidian-claude-conduit`)
 - **What:** Native Obsidian plugin. Chat with your vault, retrieval-grounded.
-- **Status:** v1.0.7 — Curator `duplicate-candidate` merge-into apply path landed. ADR-024 fully closed. **ADR-025 (Phase 6.7 — MCP write-side) and ADR-026 (Phase 8 — generative layer) both accepted 2026-05-14** (D1-D10 batch-accepted; OQs remain open and surface at the relevant implementation slice). Phase 6.7 ships at v1.1.0; Phase 8 MVP at v1.2.0.
+- **Status:** v1.0.8 — Phase 6.7 substrate per ADR-025. `Transaction` gained an optional `source?: string` field (D5); propagated through `TransactionLog.begin(sessionId?, source?)` and `WriteToolContext.begin(sessionId?, source?)` to `write.committed` activity events. 5 new settings keys (`mcpWriteEnabled`, `mcpWriteAllowedClients`, `mcpWritePathPrefixes`, `mcpWriteRateLimitPerHour`, `mcpHighRiskToolsEnabled`) with UI section. **No tool exposure yet** — substrate only, in-app behavior unchanged. Next: v1.0.9 flips `MCP_EXPOSED_TOOL_NAMES` dynamic + adds the write-gate; v1.1.0 lands the queue/side-panel/notifications. ADR-026 (Phase 8) MVP at v1.2.0.
 - **Build pattern:** `pair-via-claude-code` per [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) (ADR-010). Thad decides; Claude implements.
 
 ## Read first (in this order)

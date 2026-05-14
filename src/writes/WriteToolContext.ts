@@ -27,8 +27,15 @@ export class WriteToolContext {
 
   constructor(private readonly txLog: TransactionLog) {}
 
-  /** Open a transaction for this turn. Throws if already open. */
-  begin(sessionId?: string): void {
+  /**
+   * Open a transaction for this turn. Throws if already open.
+   *
+   * `source` is forwarded to the `TransactionLog` per ADR-025 D5 — set
+   * it to `'mcp:<client>'` when opening on behalf of an external MCP
+   * caller. Omit for in-app chat turns (the `ConduitAgent` does just
+   * that).
+   */
+  begin(sessionId?: string, source?: string): void {
     if (this.builder !== null) {
       throw new Error(
         'WriteToolContext.begin: a transaction is already open. ' +
@@ -36,7 +43,7 @@ export class WriteToolContext {
           'call threw mid-loop without unwinding.',
       );
     }
-    this.builder = this.txLog.begin(sessionId);
+    this.builder = this.txLog.begin(sessionId, source);
   }
 
   /** Record an applied op into the current transaction. Throws if no transaction is open. */
