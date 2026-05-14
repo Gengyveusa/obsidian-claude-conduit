@@ -82,7 +82,14 @@ export class ActivityView extends ItemView {
     if (this.activeFilter === 'last24h') {
       listOpts.sinceMs = Date.now() - 24 * 60 * 60 * 1000;
     }
-    const events = await log.list(listOpts);
+    let events = await log.list(listOpts);
+    if (this.activeFilter === 'mcp') {
+      // v0.9.1 — MCP chip is a source filter, not a kind filter. We
+      // post-filter rather than pushing source into ActivityLog.list()
+      // because source is optional and the field is brand-new (v0.9.0
+      // PR 4); keeping the storage API minimal.
+      events = events.filter((e) => typeof e.source === 'string' && e.source.startsWith('mcp'));
+    }
     const total = await log.size();
     this.headerCountEl.setText(`${events.length} of ${total}`);
 
@@ -204,6 +211,7 @@ export class ActivityView extends ItemView {
 type FilterId =
   | 'all'
   | 'last24h'
+  | 'mcp'
   | 'errors'
   | 'classifier'
   | 'suggestions'
@@ -213,6 +221,7 @@ type FilterId =
 const FILTER_ORDER: FilterId[] = [
   'all',
   'last24h',
+  'mcp',
   'errors',
   'classifier',
   'suggestions',
@@ -223,6 +232,7 @@ const FILTER_ORDER: FilterId[] = [
 const FILTER_LABELS: Record<FilterId, string> = {
   all: 'All',
   last24h: 'Last 24h',
+  mcp: 'MCP',
   errors: 'Errors',
   classifier: 'Classifier',
   suggestions: 'Suggestions',
@@ -234,6 +244,7 @@ const FILTER_LABELS: Record<FilterId, string> = {
 const FILTERS: Record<FilterId, ActivityEventKind[] | null> = {
   all: null,
   last24h: null,
+  mcp: null,
   errors: ['error'],
   classifier: ['classifier.ran'],
   suggestions: [
