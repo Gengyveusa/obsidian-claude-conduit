@@ -6,13 +6,13 @@ This file orients a Claude Code session opened against this repo. Substrate ques
 
 - **Name:** Sagittarius — Claude Conduit (`obsidian-claude-conduit`)
 - **What:** Native Obsidian plugin. Chat with your vault, retrieval-grounded.
-- **Status:** v1.0.7 — Curator `duplicate-candidate` merge-into apply path landed. ADR-024 fully closed. ADR-025 (Phase 6.7 — MCP write-side) and ADR-026 (Phase 8 — generative layer) drafts now live in `docs/`, awaiting Thad's sign-off on D1-D10 + open questions for each. No code on those phases until accepted.
+- **Status:** v1.0.7 — Curator `duplicate-candidate` merge-into apply path landed. ADR-024 fully closed. **ADR-025 (Phase 6.7 — MCP write-side) and ADR-026 (Phase 8 — generative layer) both accepted 2026-05-14** (D1-D10 batch-accepted; OQs remain open and surface at the relevant implementation slice). Phase 6.7 ships at v1.1.0; Phase 8 MVP at v1.2.0.
 - **Build pattern:** `pair-via-claude-code` per [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) (ADR-010). Thad decides; Claude implements.
 
 ## Read first (in this order)
 
-1. [`docs/2026-05-14-adr-025-phase-6.7-mcp-write-side-plan.md`](docs/2026-05-14-adr-025-phase-6.7-mcp-write-side-plan.md) — ADR-025, Phase 6.7 MCP write-side **draft** (10 decisions + 1 OQ; awaiting sign-off).
-2. [`docs/2026-05-14-adr-026-phase-8-generative-layer-plan.md`](docs/2026-05-14-adr-026-phase-8-generative-layer-plan.md) — ADR-026, Phase 8 generative layer **draft** (10 decisions + 3 OQs; awaiting sign-off).
+1. [`docs/2026-05-14-adr-025-phase-6.7-mcp-write-side-plan.md`](docs/2026-05-14-adr-025-phase-6.7-mcp-write-side-plan.md) — ADR-025, Phase 6.7 MCP write-side plan (10 decisions, all accepted; 1 OQ open).
+2. [`docs/2026-05-14-adr-026-phase-8-generative-layer-plan.md`](docs/2026-05-14-adr-026-phase-8-generative-layer-plan.md) — ADR-026, Phase 8 generative layer plan (10 decisions, all accepted; 3 OQs open).
 3. [`docs/2026-05-14-phase-7-close.md`](docs/2026-05-14-phase-7-close.md) — ADR-024, Phase 7 retrospective (two lessons; first v1.x release).
 4. [`docs/2026-05-14-phase-6.5-close.md`](docs/2026-05-14-phase-6.5-close.md) — ADR-023, Phase 6.5 retrospective (two lessons + write-side-deferred).
 5. [`docs/2026-05-13-adr-021-phase-6.5-mcp-bridge-plan.md`](docs/2026-05-13-adr-021-phase-6.5-mcp-bridge-plan.md) — ADR-021, Phase 6.5 plan (MCP bridge; 9 decisions, all accepted).

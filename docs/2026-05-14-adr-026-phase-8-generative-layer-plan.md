@@ -1,7 +1,7 @@
 ---
 title: "ADR-026: Phase 8 plan — Generative layer (cited drafts + proposal quarantine)"
 type: decision
-status: "Draft — awaiting Thad's sign-off"
+status: "Accepted (Thad batch-accepted D1-D10 on 2026-05-14)"
 date: 2026-05-14
 ---
 
@@ -83,7 +83,7 @@ drafts that are *almost* records but not quite.
 carry `quarantined: true` frontmatter.** Promotion = remove the tag.
 **Con:** retrieval would have to filter quarantined notes everywhere.
 
-`<DECISION D1: PROPOSED — (b) `_drafts/<topic-folder>/`. Mirrors
+`<DECISION D1: ACCEPTED 2026-05-14 — (b) `_drafts/<topic-folder>/`. Mirrors
 the target structure (clearest "this draft is going where" signal),
 keeps drafts as real markdown the user can edit in Obsidian, gives
 retrieval an easy folder-prefix filter to exclude. (c) puts drafts
@@ -117,7 +117,7 @@ view.** Plugin-side transform.
 **(e) Citations as YAML frontmatter array.** Hidden by default.
 Surfaced in a citations panel on the draft card.
 
-`<DECISION D2: PROPOSED — (a) + (e) combined. Inline `[[source]]`
+`<DECISION D2: ACCEPTED 2026-05-14 — (a) + (e) combined. Inline `[[source]]`
 markers during drafting (so the LLM and the user both see the
 provenance trail in-line), plus a frontmatter `cited_chunks: [...]`
 array that the promotion path uses to verify "every cited chunk is
@@ -143,7 +143,7 @@ grounded claims.** Trust the user to review.
 **(d) Configurable: `citationPolicy: 'strict' | 'marked' | 'free'`.**
 Default `'marked'`.
 
-`<DECISION D3: PROPOSED — (d) with default `'marked'`. Strict refusal
+`<DECISION D3: ACCEPTED 2026-05-14 — (d) with default `'marked'`. Strict refusal
 makes for bad first drafts; free trust makes for unreviewable drafts.
 `'marked'` is the readable middle — uncited transition sentences are
 visible as comments so the user can decide whether to keep them or
@@ -165,7 +165,7 @@ downgrade.
 **(c) Opus 4.7 default, but Sonnet 4.6 for iteration / refinement
 calls.** Quality where it matters, speed where it doesn't.
 
-`<DECISION D4: PROPOSED — (b). Drafting is the one place where the
+`<DECISION D4: ACCEPTED 2026-05-14 — (b). Drafting is the one place where the
 quality/cost trade-off bends toward quality. Opus 4.7 default;
 user can pick Sonnet if budget pressure dominates. Budget tracking
 (spec §3.4) already separates `maxDollarsPerDay` so users see drafting
@@ -191,7 +191,7 @@ iterate via chat-in-modal → close on promote/discard.
 **(d) Both (a) and (b).** Side panel for management, ChatView
 mode for iteration.
 
-`<DECISION D5: PROPOSED — (d). Drafts side panel is the canonical
+`<DECISION D5: ACCEPTED 2026-05-14 — (d). Drafts side panel is the canonical
 "what drafts exist" surface (mirrors Suggestions + Activity per
 ADR-019). ChatView "Draft" mode is the work surface — turning chat
 into iterative refinement of a specific draft note. (c) modals are
@@ -213,7 +213,7 @@ per-section edits via the existing diff card.
 **(c) Hybrid: chat for high-level direction, `patch_note` for
 specific edits.** Same chat surface; tool routing decides.
 
-`<DECISION D6: PROPOSED — (c). The chat surface is the same as
+`<DECISION D6: ACCEPTED 2026-05-14 — (c). The chat surface is the same as
 in-app chat; what's different is the model knows "you're refining
 the draft at path X" and routes its tool calls accordingly. Whole-
 draft replacements use `patch_note` with a single op spanning the
@@ -240,7 +240,7 @@ more code.
 **(d) Inline: editing the draft and removing `quarantined: true`
 frontmatter promotes.** Goes with D1 (d). Lighter.
 
-`<DECISION D7: PROPOSED — (a). `move_note` already exists, handles
+`<DECISION D7: ACCEPTED 2026-05-14 — (a). `move_note` already exists, handles
 wikilink rewrites, has a diff card. The draft path
 (`_drafts/10-Inbox/foo.md` → `10-Inbox/foo.md`) is a simple rename.
 (b) reuses the v1.0.7 pattern but doubles the diff cards needlessly
@@ -265,7 +265,7 @@ Skip, or Defer.
 **(c) Same as (b), but explicit user opt-in per topic (the user
 configures "watch for synthesis gaps in `30-Projects/`").**
 
-`<DECISION D8: PROPOSED — (a) defer to v1.3. Phase 8 has enough
+`<DECISION D8: ACCEPTED 2026-05-14 — (a) defer to v1.3. Phase 8 has enough
 substrate work — quarantine, citation contract, drafting UI,
 promotion path — without also building the proactive-suggestion
 half. ADR-022 lesson 2 ("pure-rule first, LLM-judged second") says
@@ -295,7 +295,7 @@ becomes a two-mode surface.
 into `_drafts/` and the user reviews in the Drafts side panel.
 **Pro:** simplest. **Con:** breaks ADR-016 D2.
 
-`<DECISION D9: PROPOSED — (a). A draft is `create_note(path =
+`<DECISION D9: ACCEPTED 2026-05-14 — (a). A draft is `create_note(path =
 _drafts/<topic>/<slug>.md, content = <body with inline cites>)`.
 Existing diff card handles it. The Drafts side panel
 (D5 (d)) is the post-creation management surface. Promotion is
@@ -325,7 +325,7 @@ spec §10's full vision. **Versions:** v1.2.0 → v1.3.0.
 dossiers) into the same minor bump. Larger but ships the
 "agent that remembers + writes" story together.
 
-`<DECISION D10: PROPOSED — (b). MVP = user-initiated draft +
+`<DECISION D10: ACCEPTED 2026-05-14 — (b). MVP = user-initiated draft +
 quarantine + citations + promotion, shipped as v1.2.0. Iteration
 polish = v1.2.x patches. Proactive draft suggestions (D8 (b)) is
 v1.3.0; memory layer (Phase 9) is its own ADR. Keep this phase's
@@ -383,5 +383,9 @@ Surface for Thad's input.
 
 ## Sign-off
 
-Awaiting Thad. Decisions D1-D10 + OQ1-OQ3 each need explicit accept
-/ amend / reject before code lands.
+**Accepted 2026-05-14.** Thad batch-accepted D1-D10 ("all D1-D10
+good for both"). OQ1-OQ3 remain open — surface in the
+implementation slices where each becomes concrete (OQ1 at
+promotion-path PR, OQ2 once external-source citation use cases
+appear, OQ3 at the first draft that hits the existing daily
+budget).
