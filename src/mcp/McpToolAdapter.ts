@@ -2,19 +2,25 @@ import type { ToolDefinition } from '../agent/types';
 
 /**
  * Phase 6.5 (v0.9.0 PR 3) — bridge between our `ToolRegistry` and the
- * MCP `tools/list` + `tools/call` surface per ADR-021 D9.
+ * MCP `tools/list` + `tools/call` surface per ADR-021 D9, extended in
+ * v1.0.9 per ADR-025 (Phase 6.7) to add the write tools behind explicit
+ * user opt-in toggles.
  *
- * Per D1 (c) the v0.9.0 bridge exposes the five read-only tools only:
- * `read_note`, `list_folder`, `search_vault`, `get_backlinks`,
- * `get_graph_neighborhood`. Phase 4 write tools stay registered with
- * our `ToolRegistry` for the in-app agent, but the MCP allowlist
- * filters them out at the boundary.
+ * Read tools (always exposed when the bridge is enabled):
+ *   `read_note`, `list_folder`, `search_vault`, `get_backlinks`,
+ *   `get_graph_neighborhood`.
+ *
+ * Write tools (exposed only when `mcpWriteEnabled`):
+ *   `create_note`, `append_to_note`, `patch_note`, `rewrite_section`,
+ *   `add_frontmatter`, `move_note`, `rename_note`, `link_notes`,
+ *   `file_asset`. The destructive `delete_note` requires a second
+ *   toggle (`mcpHighRiskToolsEnabled`) per ADR-025 D1.
  *
  * Pure functions — no I/O. Caller composes them with `ToolRegistry`.
  */
 
-/** Whitelist of tool names exposed over MCP in v0.9.0 (ADR-021 D1 + D9). */
-export const MCP_EXPOSED_TOOL_NAMES = [
+/** Read-only tools per ADR-021 D1 — exposed whenever the bridge is up. */
+export const MCP_READ_TOOL_NAMES = [
   'read_note',
   'list_folder',
   'search_vault',
@@ -22,7 +28,82 @@ export const MCP_EXPOSED_TOOL_NAMES = [
   'get_graph_neighborhood',
 ] as const;
 
-export type McpExposedToolName = (typeof MCP_EXPOSED_TOOL_NAMES)[number];
+/**
+ * Write tools per ADR-025 D1 (excluding the high-risk `delete_note`,
+ * which requires a separate toggle). All routes through the diff card
+ * via the existing `CallbackApprovalGate`.
+ */
+export const MCP_WRITE_TOOL_NAMES = [
+  'create_note',
+  'append_to_note',
+  'patch_note',
+  'rewrite_section',
+  'add_frontmatter',
+  'move_note',
+  'rename_note',
+  'link_notes',
+  'file_asset',
+] as const;
+
+/** High-risk write tools per ADR-025 D1 — gated behind a second toggle. */
+export const MCP_HIGH_RISK_TOOL_NAMES = ['delete_note'] as const;
+
+/**
+ * Compute the full exposure set for the current settings. Returns a
+ * `ReadonlySet<string>` for O(1) membership tests in `mcpToolListFrom`
+ * and `isMcpExposed`.
+ *
+ * @example
+ *   const exposed = mcpExposedToolNames({
+ *     writeEnabled: settings.mcpWriteEnabled,
+ *     highRiskEnabled: settings.mcpHighRiskToolsEnabled,
+ *   });
+ *   const tools = mcpToolListFrom(registry.definitions(), exposed);
+ */
+export function mcpExposedToolNames(opts: {
+  writeEnabled: boolean;
+  highRiskEnabled: boolean;
+}): ReadonlySet<string> {
+  const out = new Set<string>(MCP_READ_TOOL_NAMES);
+  if (opts.writeEnabled) {
+    for (const name of MCP_WRITE_TOOL_NAMES) {
+      out.add(name);
+    }
+    if (opts.highRiskEnabled) {
+      for (const name of MCP_HIGH_RISK_TOOL_NAMES) {
+        out.add(name);
+      }
+    }
+  }
+  return out;
+}
+
+/** True if `name` is one of the always-on read tools. */
+export function isMcpReadTool(name: string): boolean {
+  return (MCP_READ_TOOL_NAMES as readonly string[]).includes(name);
+}
+
+/** True if `name` is any MCP-exposed write tool (read tools return false). */
+export function isMcpWriteTool(name: string): boolean {
+  return (
+    (MCP_WRITE_TOOL_NAMES as readonly string[]).includes(name) ||
+    (MCP_HIGH_RISK_TOOL_NAMES as readonly string[]).includes(name)
+  );
+}
+
+/** True if `name` is in the high-risk tier per ADR-025 D1. */
+export function isMcpHighRiskTool(name: string): boolean {
+  return (MCP_HIGH_RISK_TOOL_NAMES as readonly string[]).includes(name);
+}
+
+/**
+ * @deprecated Use {@link mcpExposedToolNames} with the current settings.
+ * Kept for the read-only test fixtures that pre-date v1.0.9; new code
+ * should compute exposure dynamically.
+ */
+export const MCP_EXPOSED_TOOL_NAMES = MCP_READ_TOOL_NAMES;
+
+export type McpExposedToolName = (typeof MCP_READ_TOOL_NAMES)[number];
 
 /** Single tool entry as MCP clients expect it in `tools/list`. */
 export interface McpToolDefinition {
@@ -44,17 +125,19 @@ export interface McpToolCallResult {
 }
 
 /**
- * Filter a `ToolDefinition[]` (e.g. `toolRegistry.list()`) down to the
- * MCP allowlist + reshape into the MCP tool format. Drops anything
- * not in `MCP_EXPOSED_TOOL_NAMES`.
+ * Filter a `ToolDefinition[]` (e.g. `toolRegistry.definitions()`) down
+ * to the supplied exposure set and reshape into the MCP tool format.
+ * Caller computes the exposure set via `mcpExposedToolNames(settings)`
+ * each call so settings flips reflect immediately without server
+ * restart.
  */
 export function mcpToolListFrom(
   tools: ReadonlyArray<ToolDefinition>,
+  exposed: ReadonlySet<string>,
 ): McpToolDefinition[] {
-  const allowed = new Set<string>(MCP_EXPOSED_TOOL_NAMES);
   const out: McpToolDefinition[] = [];
   for (const tool of tools) {
-    if (!allowed.has(tool.name)) {
+    if (!exposed.has(tool.name)) {
       continue;
     }
     out.push({
@@ -67,12 +150,12 @@ export function mcpToolListFrom(
 }
 
 /**
- * True if `name` is one of the MCP-exposed read-only tools. Used by
- * the dispatcher to reject `tools/call` for non-allowlisted names
+ * True if `name` is in the supplied exposure set. Used by the
+ * dispatcher to reject `tools/call` for non-allowlisted names
  * (returns `Method not found`-style error).
  */
-export function isMcpExposed(name: string): boolean {
-  return (MCP_EXPOSED_TOOL_NAMES as readonly string[]).includes(name);
+export function isMcpExposed(name: string, exposed: ReadonlySet<string>): boolean {
+  return exposed.has(name);
 }
 
 /**

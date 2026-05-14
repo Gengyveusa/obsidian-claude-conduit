@@ -417,6 +417,19 @@ export default class SagittariusPlugin extends Plugin {
       toolRegistry: bundle.deps.tools,
       pluginVersion: this.manifest.version,
       ...(this.activityLog !== null && { activityLog: this.activityLog }),
+      // Phase 6.7 (v1.0.9) — wire write-side gating + the singleton
+      // WriteToolContext so MCP-driven writes carry `source: 'mcp:<client>'`
+      // on their Transaction per ADR-025 D5. The accessor reads
+      // `this.settings` on each call so toggles in the settings UI
+      // take effect immediately without restarting the MCP server.
+      writeContext: bundle.deps.ctx,
+      writeSettings: () => ({
+        mcpWriteEnabled: this.settings.mcpWriteEnabled,
+        mcpHighRiskToolsEnabled: this.settings.mcpHighRiskToolsEnabled,
+        mcpWriteAllowedClients: this.settings.mcpWriteAllowedClients,
+        mcpWritePathPrefixes: this.settings.mcpWritePathPrefixes,
+        mcpWriteRateLimitPerHour: this.settings.mcpWriteRateLimitPerHour,
+      }),
     });
     try {
       await server.start();
