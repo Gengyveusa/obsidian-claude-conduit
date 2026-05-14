@@ -1,18 +1,20 @@
 import type { ActivityLog } from '../activity/ActivityLog';
 import type { ToolRegistry } from '../agent/ToolRegistry';
 
+import { HttpListener, type HandlerResult, type HttpHandler } from './HttpListener';
+
 /**
- * Phase 6.5 (v0.9.0) — MCP server scaffold per
+ * Phase 6.5 (v0.9.0) — MCP server per
  * [ADR-021](../../docs/2026-05-13-adr-021-phase-6.5-mcp-bridge-plan.md).
  *
- * **PR 1 ships the skeleton only** — `start()` / `stop()` are wired but
- * no transport is bound yet. The HTTP/SSE listener (D2 (b)) lands in
- * PR 2; tool registration (D9) in PR 3; activity emission with
- * `source:` field (D5) in PR 4.
+ * Composition:
+ *   - `HttpListener` (PR 2) — owns the socket, parses bodies, runs auth
+ *   - this class — wires the listener's handler to the (future) MCP
+ *     protocol dispatcher
  *
- * Lifecycle: `main.ts` constructs the server when `settings.mcpEnabled`
- * flips on. `start()` is idempotent — calling it twice is a no-op.
- * `stop()` releases any bound port + cancels in-flight requests.
+ * **PR 2 scope:** lifecycle + auth + stub handler. The handler returns
+ * `{ ok: true, echo: body }` for every authenticated POST. PR 3 swaps
+ * the stub for the `@modelcontextprotocol/sdk` JSON-RPC dispatcher.
  *
  * @example
  *   const server = new McpServer({
@@ -23,11 +25,11 @@ import type { ToolRegistry } from '../agent/ToolRegistry';
  *     activityLog,
  *   });
  *   await server.start();
- *   // ... external client calls now flow through `toolRegistry.execute(...)`
+ *   // POST http://127.0.0.1:8765/ with Authorization: Bearer <token>
  *   await server.stop();
  */
 export interface McpServerDeps {
-  /** SHA-256 hex hash of the bearer token. Empty string = no auth (refuse to start). */
+  /** SHA-256 hex hash of the bearer token. Empty string = refuse to start. */
   tokenHash: string;
   /** Localhost port to bind. Default 8765 per ADR-021 D6. */
   port: number;
@@ -39,11 +41,14 @@ export interface McpServerDeps {
   activityLog?: ActivityLog;
   /** Test-injectable logger. */
   logger?: { warn: (msg: string) => void; info?: (msg: string) => void };
+  /** Test seam — inject a pre-constructed listener (and skip real bind). */
+  listener?: HttpListener;
 }
 
 export class McpServer {
   private readonly deps: McpServerDeps;
   private readonly logger: { warn: (msg: string) => void; info?: (msg: string) => void };
+  private readonly listener: HttpListener;
   private started = false;
 
   constructor(deps: McpServerDeps) {
@@ -52,48 +57,73 @@ export class McpServer {
       warn: (msg) => console.warn(`[mcp-server] ${msg}`),
       info: (msg) => console.warn(`[mcp-server] ${msg}`),
     };
+    this.listener =
+      deps.listener ??
+      new HttpListener({
+        port: deps.port,
+        tokenHash: deps.tokenHash,
+        logger: this.logger,
+      });
+    this.listener.setHandler(this.makeHandler());
   }
 
   /**
-   * Bind the configured port and accept MCP requests. Idempotent —
-   * calling twice while started is a no-op. Returns once the server
-   * is ready to accept connections (or throws on bind failure).
-   *
-   * **PR 1:** stub — flips the `started` flag, logs an info line, and
-   * returns. PR 2 wires the actual HTTP/SSE listener.
+   * Bind the configured port and accept MCP requests. Idempotent.
+   * Throws on bind failure (EADDRINUSE etc.).
    */
-  start(): Promise<void> {
+  async start(): Promise<void> {
     if (this.started) {
-      return Promise.resolve();
+      return;
     }
     if (this.deps.tokenHash.length === 0) {
-      return Promise.reject(
-        new Error(
-          'McpServer: refusing to start without a configured bearer token (settings.mcpToken).',
-        ),
+      throw new Error(
+        'McpServer: refusing to start without a configured bearer token (settings.mcpToken).',
       );
     }
-    this.logger.info?.(
-      `start scaffold — port ${this.deps.port}, ${this.deps.allowedClients.length} allowed client(s), HTTP listener wires in PR 2`,
-    );
+    await this.listener.start();
     this.started = true;
-    return Promise.resolve();
+    this.logger.info?.(
+      `started — port ${this.listener.boundPort() ?? this.deps.port}, ` +
+        `${this.deps.allowedClients.length} allowed client(s)`,
+    );
   }
 
-  /**
-   * Stop the server and release the bound port. Idempotent.
-   */
-  stop(): Promise<void> {
+  /** Stop the server and release the bound port. Idempotent. */
+  async stop(): Promise<void> {
     if (!this.started) {
-      return Promise.resolve();
+      return;
     }
-    this.logger.info?.('stop scaffold — released no resources yet (PR 1)');
+    await this.listener.stop();
     this.started = false;
-    return Promise.resolve();
+    this.logger.info?.('stopped');
   }
 
   /** True if `start()` has been called and `stop()` has not. */
   isRunning(): boolean {
     return this.started;
+  }
+
+  /** Return the actually-bound port (useful when port=0 ephemeral binding). */
+  boundPort(): number | null {
+    return this.listener.boundPort();
+  }
+
+  /**
+   * PR 2 stub handler. Echoes the request body, attaches server
+   * metadata. PR 3 replaces this with the MCP SDK's JSON-RPC dispatch.
+   */
+  private makeHandler(): HttpHandler {
+    return (_req, body): Promise<HandlerResult> => {
+      return Promise.resolve({
+        status: 200,
+        body: {
+          ok: true,
+          server: 'sagittarius',
+          stage: 'pr-2-scaffold',
+          allowedClients: this.deps.allowedClients,
+          echo: body,
+        },
+      });
+    };
   }
 }

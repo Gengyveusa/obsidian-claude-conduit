@@ -35,6 +35,11 @@ export default [
         TextDecoder: 'readonly',
         atob: 'readonly',
         btoa: 'readonly',
+        // Node + Electron-renderer globals — available because Obsidian
+        // plugins run with Node integration enabled (needed by the MCP
+        // HTTP listener and the http-module-based request body handling).
+        Buffer: 'readonly',
+        NodeJS: 'readonly',
       },
     },
     plugins: {
