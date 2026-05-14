@@ -138,6 +138,31 @@ export interface SagittariusSettings {
    * a specific external app (e.g. `['claude-desktop']`).
    */
   mcpAllowedClients: string[];
+
+  // Phase 7 curator (per ADR-022 D2, D6)
+  /**
+   * Master switch for the curator. When off, `Sagittarius: Run curator`
+   * surfaces a Notice and does nothing else; no rules ever run.
+   * Default off — curator is opt-in like the organization engine.
+   */
+  curatorEnabled: boolean;
+  /**
+   * Per-sweep enqueue cap (ADR-022 D6 suggestion-fatigue mitigation).
+   * The orchestrator severity-ranks all findings, then keeps the top N.
+   * Default 20.
+   */
+  curatorMaxPerSweep: number;
+  /**
+   * Days since last modification before the orphan rule considers a
+   * note stale. Lower = more aggressive archive proposals. Per
+   * ADR-022 default 90.
+   */
+  curatorStaleNoteThresholdDays: number;
+  /**
+   * Per-rule enable map. Rule names not present default to enabled.
+   * Set to `false` to disable a specific rule without touching others.
+   */
+  curatorEnabledRules: Record<string, boolean>;
 }
 
 export const DEFAULT_SETTINGS: SagittariusSettings = {
@@ -180,4 +205,9 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
   mcpPort: 8765,
   mcpToken: '',
   mcpAllowedClients: [],
+
+  curatorEnabled: false,
+  curatorMaxPerSweep: 20,
+  curatorStaleNoteThresholdDays: 90,
+  curatorEnabledRules: {},
 };
