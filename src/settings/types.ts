@@ -170,6 +170,12 @@ export interface SagittariusSettings {
    * `add-frontmatter` suggestions. Empty (default) = rule disabled.
    */
   curatorFolderSchemas: Record<string, string[]>;
+  /**
+   * v1.0.3 — scheduled sweep interval, days. 0 = manual only
+   * (default; per ADR-022 D2 hybrid mode). Non-zero values schedule
+   * a periodic `runCurator()` via the plugin's `registerInterval`.
+   */
+  curatorSweepIntervalDays: number;
 }
 
 export const DEFAULT_SETTINGS: SagittariusSettings = {
@@ -218,4 +224,5 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
   curatorStaleNoteThresholdDays: 90,
   curatorEnabledRules: {},
   curatorFolderSchemas: {},
+  curatorSweepIntervalDays: 0,
 };
