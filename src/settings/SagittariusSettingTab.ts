@@ -264,6 +264,69 @@ export class SagittariusSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }),
       );
+
+    this.renderCuratorSkipPatterns(parent);
+  }
+
+  /**
+   * v1.0.5 — list-and-clear UI for the curator skip patterns (ADR-022 D7).
+   * Renders one row per stored `(kind, pathPrefix)` signature with an X
+   * button to remove it. Empty state shows a one-line nudge. Re-renders
+   * after every mutation so the count stays current.
+   */
+  private renderCuratorSkipPatterns(parent: HTMLElement): void {
+    const section = parent.createDiv();
+    section.createEl('h4', { text: 'Skip patterns' });
+    section.createEl('p', {
+      cls: 'setting-item-description',
+      text:
+        'When you Skip a curator suggestion, the (kind, path) pair is remembered ' +
+        'so the next sweep won’t propose it again. Per ADR-022 D7 trust-calibration.',
+    });
+
+    const list = section.createDiv({ cls: 'sagittarius-skip-patterns' });
+
+    const rerender = (): void => {
+      list.empty();
+      const store = this.plugin.curatorSkipPatterns;
+      if (store === null) {
+        list.createEl('p', {
+          cls: 'setting-item-description',
+          text: 'Skip-pattern store unavailable — reload the plugin.',
+        });
+        return;
+      }
+      void store.signatures().then((sigs) => {
+        list.empty();
+        if (sigs.length === 0) {
+          list.createEl('p', {
+            cls: 'setting-item-description',
+            text: 'No skip patterns yet. Click Skip on a curator suggestion to add one.',
+          });
+          return;
+        }
+        for (let i = 0; i < sigs.length; i += 1) {
+          const idx = i;
+          const sig = sigs[i];
+          const row = list.createDiv({ cls: 'sagittarius-skip-pattern-row' });
+          row.createEl('code', { text: sig.kind });
+          row.createEl('span', { text: '  ' });
+          row.createEl('span', { text: sig.pathPrefix });
+          const remove = row.createEl('button', { text: 'Remove' });
+          remove.addEventListener('click', () => {
+            void store.remove(idx).then(rerender);
+          });
+        }
+
+        const actions = list.createDiv({ cls: 'sagittarius-skip-pattern-actions' });
+        const clearAll = actions.createEl('button', { text: 'Clear all' });
+        clearAll.addEventListener('click', () => {
+          void store.clear().then(rerender);
+        });
+      });
+    };
+
+    rerender();
   }
 
   private renderActivitySection(parent: HTMLElement): void {

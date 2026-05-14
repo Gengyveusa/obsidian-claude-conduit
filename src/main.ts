@@ -56,6 +56,7 @@ import { makeMissingFrontmatterRule } from './curator/rules/MissingFrontmatterRu
 import { makeOrphanRule } from './curator/rules/OrphanRule';
 import { makeStaleNoteRule } from './curator/rules/StaleNoteRule';
 import { makeTagNormalizeRule } from './curator/rules/TagNormalizeRule';
+import { JsonSkipPatternStore, type SkipPatternStore } from './curator/SkipPatternStore';
 import { VaultCorpus } from './curator/VaultCorpus';
 import { MocAddClassifier } from './organization/MocAddClassifier';
 import { MocDiscovery } from './organization/MocDiscovery';
@@ -90,6 +91,27 @@ const INDEX_DB_PATH = '.obsidian/plugins/obsidian-claude-conduit/index.sqlite';
 const TX_LOG_PATH = '.obsidian/plugins/obsidian-claude-conduit/transactions.json';
 const SUGGESTIONS_PATH = '.obsidian/plugins/obsidian-claude-conduit/suggestions.json';
 const ACTIVITY_LOG_PATH = '.obsidian/plugins/obsidian-claude-conduit/activity.json';
+const CURATOR_SKIP_PATTERNS_PATH =
+  '.obsidian/plugins/obsidian-claude-conduit/curator-skip-patterns.json';
+
+/**
+ * v1.0.5 — Suggestion kinds produced by the curator. The
+ * `SkipPatternStore` only records signatures for these (Phase 5
+ * `route` / `moc-add` are not curator output and stay unfiltered).
+ */
+const CURATOR_SUGGESTION_KINDS: ReadonlySet<string> = new Set([
+  'broken-link-fix',
+  'archive-stale',
+  'add-frontmatter',
+  'stale-review',
+  'duplicate-candidate',
+  'normalize-tag',
+]);
+
+/** True iff a suggestion kind originated from the Phase 7 curator. */
+export function isCuratorSuggestionKind(kind: string): boolean {
+  return CURATOR_SUGGESTION_KINDS.has(kind);
+}
 
 interface AgentBundle {
   agent: ConduitAgent;
@@ -131,6 +153,14 @@ export default class SagittariusPlugin extends Plugin {
    * SuggestionsView can record `suggestion.skipped` events directly.
    */
   activityLog: ActivityLog | null = null;
+  /**
+   * v1.0.5 — Curator skip-pattern persistence per ADR-022 D7. Exposed
+   * on the plugin so `SuggestionsView.handleSkip` can `.record()` the
+   * `(kind, notePath)` signature when a curator-derived suggestion is
+   * skipped. Always non-null after `onload` (the store itself is cheap;
+   * an empty curator config just means it's never queried).
+   */
+  curatorSkipPatterns: SkipPatternStore | null = null;
   private organizationWatcher: OrganizationWatcher | null = null;
   private organizationSweepHandle: number | null = null;
   /**
@@ -165,6 +195,14 @@ export default class SagittariusPlugin extends Plugin {
         path: ACTIVITY_LOG_PATH,
       });
     }
+
+    // v1.0.5 — Curator skip-pattern store (ADR-022 D7). Always
+    // instantiated; queried by `runCurator` and written by
+    // `SuggestionsView.handleSkip` only for curator suggestion kinds.
+    this.curatorSkipPatterns = new JsonSkipPatternStore({
+      adapter: new VaultAdapterImpl(this.app),
+      path: CURATOR_SKIP_PATTERNS_PATH,
+    });
 
     this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
     this.registerView(
@@ -1067,9 +1105,21 @@ export default class SagittariusPlugin extends Plugin {
     const outcome = await orchestrator.run({ maxPerSweep: this.settings.curatorMaxPerSweep });
 
     let enqueuedCount = 0;
+    let skipFiltered = 0;
     for (const finding of outcome.enqueued) {
       const suggestion = findingToSuggestion(finding);
       if (suggestion === null) {
+        continue;
+      }
+      // v1.0.5 — ADR-022 D7 trust-calibration: drop suggestions whose
+      // (kind, notePath) matches a stored skip pattern from a previous
+      // sweep. The store-side check uses startsWith so a `pathPrefix`
+      // of `'10-Inbox/'` skips an entire folder.
+      if (
+        this.curatorSkipPatterns !== null &&
+        (await this.curatorSkipPatterns.matches(suggestion.kind, suggestion.notePath))
+      ) {
+        skipFiltered += 1;
         continue;
       }
       const added = await this.suggestionQueue.add(suggestion);
@@ -1110,12 +1160,14 @@ export default class SagittariusPlugin extends Plugin {
       kind: 'diagnostic',
       summary:
         `curator: rules=${outcome.rulesRun} detected=${outcome.totalDetected} ` +
-        `enqueued=${enqueuedCount} capped=${outcome.capped} errors=${outcome.errors.length}`,
+        `enqueued=${enqueuedCount} skip-filtered=${skipFiltered} ` +
+        `capped=${outcome.capped} errors=${outcome.errors.length}`,
       details: {
         scope: 'curator.swept',
         rulesRun: outcome.rulesRun,
         totalDetected: outcome.totalDetected,
         enqueued: enqueuedCount,
+        skipFiltered,
         capped: outcome.capped,
         errors: outcome.errors,
         durationMs: outcome.durationMs,
@@ -1123,8 +1175,9 @@ export default class SagittariusPlugin extends Plugin {
       },
     });
 
+    const skipNote = skipFiltered > 0 ? `, skip-filtered ${skipFiltered}` : '';
     new Notice(
-      `Sagittarius: curator found ${outcome.totalDetected}, enqueued ${enqueuedCount}, ` +
+      `Sagittarius: curator found ${outcome.totalDetected}, enqueued ${enqueuedCount}${skipNote}, ` +
         `capped ${outcome.capped}, errors ${outcome.errors.length}.`,
     );
     await this.refreshSuggestionsView();
