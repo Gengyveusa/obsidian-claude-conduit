@@ -6,26 +6,28 @@ This file orients a Claude Code session opened against this repo. Substrate ques
 
 - **Name:** Sagittarius — Claude Conduit (`obsidian-claude-conduit`)
 - **What:** Native Obsidian plugin. Chat with your vault, retrieval-grounded.
-- **Status:** v0.8.2 — Phase 6 activity stream closed. `ActivityLog` (rolling 1000-entry JSON) emits across every subsystem; `ActivityView` panel with 6 filter chips + "Last 24h" + Clear-filtered bulk op; `Sagittarius: Run diagnostics` command dumps full state to console + activity stream. Retrospective in ADR-020. Next: Phase 6.5 (MCP bridge, split from this phase per ADR-019 D1) OR Phase 7 (Curator) — Thad picks; each needs its own ADR before any code.
+- **Status:** v0.8.2 — Phase 6 activity stream closed. ADR-021 (Phase 6.5 MCP bridge, 9 decisions) + ADR-022 (Phase 7 Curator, 10 decisions) both accepted 2026-05-13. Phase 6.5 ships as v0.9.0 → v0.9.2 (read-only MCP server on localhost, bearer auth, official SDK). Phase 7 ships as v1.0.0 → v1.0.3 (four pure-rule curator detectors first; LLM-judged in v1.0.2; skip-pattern learning in v1.0.3). Phases can be built in parallel — no overlap.
 - **Build pattern:** `pair-via-claude-code` per [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) (ADR-010). Thad decides; Claude implements.
 
 ## Read first (in this order)
 
-1. [`docs/2026-05-13-phase-6-close.md`](docs/2026-05-13-phase-6-close.md) — ADR-020, Phase 6 retrospective (read this first; two lessons + Phase 7 follow-ups).
-2. [`docs/2026-05-12-adr-019-phase-6-plan.md`](docs/2026-05-12-adr-019-phase-6-plan.md) — ADR-019, Phase 6 plan (Activity Stream; MCP bridge split to later).
-3. [`docs/2026-05-12-phase-5-close.md`](docs/2026-05-12-phase-5-close.md) — ADR-018, Phase 5 retrospective.
-4. [`docs/2026-05-11-adr-017-phase-5-plan.md`](docs/2026-05-11-adr-017-phase-5-plan.md) — ADR-017, Phase 5 plan.
-5. [`docs/2026-05-10-adr-016-phase-4-plan.md`](docs/2026-05-10-adr-016-phase-4-plan.md) — ADR-016, Phase 4 plan (D1-D6 + prereqs).
-6. [`docs/2026-05-09-phase-3-close.md`](docs/2026-05-09-phase-3-close.md) — ADR-014, Phase 3 retrospective.
-7. [`docs/2026-05-10-adr-015-vault-adapter-audit.md`](docs/2026-05-10-adr-015-vault-adapter-audit.md) — ADR-015, VaultAdapter audit findings + Phase 4 prereqs.
-8. [`docs/02_SPEC.md`](docs/02_SPEC.md) — v0.1 spec (binding).
-9. [`docs/03_PACKAGE_JSON.md`](docs/03_PACKAGE_JSON.md) — dependency rationale.
-10. [`docs/04_MANIFEST_JSON.md`](docs/04_MANIFEST_JSON.md) — Obsidian manifest fields.
-11. [`docs/05_CONDUIT_AGENT_SKETCH.md`](docs/05_CONDUIT_AGENT_SKETCH.md) — agent class shape.
-12. [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) — ADR-010 (process).
-13. [`docs/embed_interface.md`](docs/embed_interface.md) — embedding contract v1 (shared with corpus-ingest).
-14. [`docs/THAD_MAN.md`](docs/THAD_MAN.md) — vault constitution; loaded into the agent's system prompt at runtime.
-15. [`docs/concierge.md`](docs/concierge.md) — Hangar voice; loaded into the agent's system prompt.
+1. [`docs/2026-05-13-adr-021-phase-6.5-mcp-bridge-plan.md`](docs/2026-05-13-adr-021-phase-6.5-mcp-bridge-plan.md) — ADR-021, Phase 6.5 plan (MCP bridge; 9 decisions, all accepted).
+2. [`docs/2026-05-13-adr-022-phase-7-curator-plan.md`](docs/2026-05-13-adr-022-phase-7-curator-plan.md) — ADR-022, Phase 7 plan (Curator; 10 decisions, all accepted; v1.0.x milestone).
+3. [`docs/2026-05-13-phase-6-close.md`](docs/2026-05-13-phase-6-close.md) — ADR-020, Phase 6 retrospective (two lessons + Phase 7 follow-ups).
+4. [`docs/2026-05-12-adr-019-phase-6-plan.md`](docs/2026-05-12-adr-019-phase-6-plan.md) — ADR-019, Phase 6 plan (Activity Stream; MCP bridge split out, now ADR-021).
+5. [`docs/2026-05-12-phase-5-close.md`](docs/2026-05-12-phase-5-close.md) — ADR-018, Phase 5 retrospective.
+6. [`docs/2026-05-11-adr-017-phase-5-plan.md`](docs/2026-05-11-adr-017-phase-5-plan.md) — ADR-017, Phase 5 plan.
+7. [`docs/2026-05-10-adr-016-phase-4-plan.md`](docs/2026-05-10-adr-016-phase-4-plan.md) — ADR-016, Phase 4 plan (D1-D6 + prereqs).
+8. [`docs/2026-05-09-phase-3-close.md`](docs/2026-05-09-phase-3-close.md) — ADR-014, Phase 3 retrospective.
+9. [`docs/2026-05-10-adr-015-vault-adapter-audit.md`](docs/2026-05-10-adr-015-vault-adapter-audit.md) — ADR-015, VaultAdapter audit findings + Phase 4 prereqs.
+10. [`docs/02_SPEC.md`](docs/02_SPEC.md) — v0.1 spec (binding).
+11. [`docs/03_PACKAGE_JSON.md`](docs/03_PACKAGE_JSON.md) — dependency rationale.
+12. [`docs/04_MANIFEST_JSON.md`](docs/04_MANIFEST_JSON.md) — Obsidian manifest fields.
+13. [`docs/05_CONDUIT_AGENT_SKETCH.md`](docs/05_CONDUIT_AGENT_SKETCH.md) — agent class shape.
+14. [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) — ADR-010 (process).
+15. [`docs/embed_interface.md`](docs/embed_interface.md) — embedding contract v1 (shared with corpus-ingest).
+16. [`docs/THAD_MAN.md`](docs/THAD_MAN.md) — vault constitution; loaded into the agent's system prompt at runtime.
+17. [`docs/concierge.md`](docs/concierge.md) — Hangar voice; loaded into the agent's system prompt.
 
 ## Decision authority hierarchy
 
@@ -60,8 +62,8 @@ When unsure (per ADR-010 §4):
 | 4 — Write layer | diff-first writes, transaction log, undo | **done (v0.3.0 MVP → v0.5.0 close; ADR-016)** |
 | 5 — Organization engine | auto-routing, MOC maintenance | done (v0.6.0 MVP → v0.7.0 close; ADR-017, ADR-018) |
 | 6 — Activity stream | events log, diagnostics, digest | done (v0.8.0 MVP → v0.8.2 close; ADR-019, ADR-020) |
-| 6.5 — MCP bridge | expose Sagittarius tools over Model Context Protocol | future (split from Phase 6 per ADR-019 D1) |
-| 7 — Curator | proactive suggestions | future |
+| 6.5 — MCP bridge | expose Sagittarius tools over Model Context Protocol | planned (v0.9.0 MVP → v0.9.2 close; ADR-021) |
+| 7 — Curator | proactive vault hygiene (broken links, orphans, stale, schema) | planned (v1.0.0 MVP → v1.0.3 close; ADR-022) |
 | 8 — Generative layer | cited drafts, proposal quarantine | future |
 | 9 — Memory layer | CLAUDE.md reader/writer, dossiers | future |
 | 10 — Polish | commands, hotkeys, screenshots | future |

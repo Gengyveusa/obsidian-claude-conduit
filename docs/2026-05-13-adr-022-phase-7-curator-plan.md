@@ -1,7 +1,7 @@
 ---
 title: "ADR-022: Phase 7 plan — Curator (proactive vault maintenance beyond folder routing)"
 type: decision
-status: "Proposed — awaiting Thad sign-off per ADR-010 §4"
+status: "Accepted (Thad signed off 2026-05-13: D1-D10 unchanged)"
 date: 2026-05-13
 ---
 
@@ -56,7 +56,7 @@ cost. Builds trust before we spend tokens.
 
 **v1.x:** add the two LLM-judged detectors once UX is proven.
 
-`<DECISION D1: PROPOSED — v1 ships 4 pure-rule detectors; LLM-judged ones deferred to v1.x. Thad: ACCEPT / override which to drop/add>`
+`<DECISION D1: ACCEPTED 2026-05-13 — v1 ships 4 pure-rule detectors; LLM-judged ones deferred to v1.x>`
 
 ---
 
@@ -77,7 +77,7 @@ opt-in friction.
 gate the schedule (`curatorSweepIntervalDays`, default 0 = manual).
 Same shape as Phase 5's `organizationSweepIntervalSec`.
 
-`<DECISION D2: PROPOSED — (c) hybrid; manual default. Thad: ACCEPT / override>`
+`<DECISION D2: ACCEPTED 2026-05-13 — (c) hybrid; manual default>`
 
 ---
 
@@ -101,7 +101,7 @@ context.
 Rule registry pluggable; new rules added without changing the curator
 orchestrator. Same pattern as `ToolRegistry`.
 
-`<DECISION D3: PROPOSED — pure-rule first, optional LLM `confirm` second. Thad: ACCEPT / override>`
+`<DECISION D3: ACCEPTED 2026-05-13 — pure-rule first, optional LLM `confirm` second>`
 
 ---
 
@@ -122,7 +122,7 @@ The SuggestionsView panel renders these alongside existing kinds; the
 existing filter chip taxonomy extends. ActivityLog records each via
 the existing `suggestion.enqueued` event (the kind field grows).
 
-`<DECISION D4: PROPOSED — five new suggestion kinds; reuse Phase 5 queue + Phase 4 apply path. Thad: ACCEPT / override>`
+`<DECISION D4: ACCEPTED 2026-05-13 — five new suggestion kinds; reuse Phase 5 queue + Phase 4 apply path>`
 
 ---
 
@@ -141,7 +141,7 @@ suggestions. Cleaner mental separation; doubles the UI surface.
 Sub-decision either way: add per-kind filter chips so the user can
 narrow to "just broken links" or "just stale notes."
 
-`<DECISION D5: PROPOSED — (a) extend SuggestionsView with new kinds + new filter chips. Thad: ACCEPT / override>`
+`<DECISION D5: ACCEPTED 2026-05-13 — (a) extend SuggestionsView with new kinds + new filter chips>`
 
 ---
 
@@ -163,7 +163,7 @@ modes to design against:
 Per-rule severity scores: deterministic 0-1 number computed in
 `detect()`. Higher = surface sooner.
 
-`<DECISION D6: PROPOSED — per-rule LLM budget cap (default 50), per-sweep enqueue cap (default 20), severity-ranked. Thad: ACCEPT / override caps>`
+`<DECISION D6: ACCEPTED 2026-05-13 — per-rule LLM budget cap (default 50), per-sweep enqueue cap (default 20), severity-ranked>`
 
 ---
 
@@ -180,7 +180,7 @@ list. Future detect() calls consult the list and pre-filter matches.
 This is a learned filter — *not* a learned classifier. Pure rule
 augmentation. No LLM in the loop. Safe to ship.
 
-`<DECISION D7: PROPOSED — persist skip patterns; pre-filter future detections. Thad: ACCEPT / override (or defer this to v1.x)>`
+`<DECISION D7: ACCEPTED 2026-05-13 — persist skip patterns; pre-filter future detections>`
 
 ---
 
@@ -200,7 +200,7 @@ Calling this v1.0.0+ because shipping the curator is the
 spec's first-line headline ("propose suggestions about your vault");
 hitting v1.0.x is honest about that milestone.
 
-`<DECISION D8: PROPOSED — four-slice rollout v1.0.0 → v1.0.3. Thad: ACCEPT / override slicing>`
+`<DECISION D8: ACCEPTED 2026-05-13 — four-slice rollout v1.0.0 → v1.0.3>`
 
 ---
 
@@ -221,7 +221,7 @@ muddies the milestone.
 If Phase 6.5 (ADR-021) lands first as v0.9.x, this decision still
 holds: Phase 7 = v1.0.x regardless of intermediate phase numbering.
 
-`<DECISION D9: PROPOSED — (a) Phase 7 = v1.0.x. Thad: ACCEPT / override>`
+`<DECISION D9: ACCEPTED 2026-05-13 — (a) Phase 7 = v1.0.x>`
 
 ---
 
@@ -237,7 +237,7 @@ If a future ADR wants the agent to introspect curator findings ("Claude,
 what does the curator think about this folder?"), that's a separate
 threat-model decision.
 
-`<DECISION D10: PROPOSED — no new agent-facing tools in Phase 7. Thad: ACCEPT / override>`
+`<DECISION D10: ACCEPTED 2026-05-13 — no new agent-facing tools in Phase 7>`
 
 ---
 
