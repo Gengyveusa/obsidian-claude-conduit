@@ -84,12 +84,15 @@ import {
   ExternalProposalsView,
   EXTERNAL_PROPOSALS_VIEW_TYPE,
 } from './views/ExternalProposalsView';
+import { NewDraftModal } from './views/NewDraftModal';
 import { SuggestionsView, SUGGESTIONS_VIEW_TYPE, destinationPathFor } from './views/SuggestionsView';
 import {
   openDuplicateMergeModal,
   type DuplicateMergeChoice,
 } from './views/DuplicateMergeModal';
 import { UndoConfirmModal } from './views/UndoConfirmModal';
+import { AnthropicDraftingEngine, draftToFileContent } from './drafts/DraftingEngine';
+import { promotedPathFor } from './drafts/paths';
 import { CallbackApprovalGate } from './writes/CallbackApprovalGate';
 import { ExternalProposalQueue } from './writes/ExternalProposalQueue';
 import { JsonTransactionLog } from './writes/TransactionLog';
@@ -390,6 +393,30 @@ export default class SagittariusPlugin extends Plugin {
       },
     });
 
+    // Phase 8 (v1.1.1) — generative drafting per ADR-026.
+    this.addCommand({
+      id: 'new-draft',
+      name: 'New draft',
+      callback: () => {
+        void this.runNewDraft();
+      },
+    });
+    this.addCommand({
+      id: 'promote-draft',
+      name: 'Promote draft',
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        const ok = file !== null && file.path.startsWith('_drafts/');
+        if (checking) {
+          return ok;
+        }
+        if (ok && file !== null) {
+          void this.runPromoteDraft(file.path);
+        }
+        return true;
+      },
+    });
+
     try {
       await this.initializeIndexing();
     } catch (err) {
@@ -536,6 +563,111 @@ export default class SagittariusPlugin extends Plugin {
    * the raw token anymore (only the hash). The test surfaces a
    * specific Notice telling the user to verify externally.
    */
+  /**
+   * Phase 8 (v1.1.1) — `Sagittarius: New draft` command handler per
+   * ADR-026. Opens the topic modal, runs the drafting engine, and
+   * routes the resulting body through the existing `create_note`
+   * proposal so the diff card per ADR-016 D2 still gates the write.
+   *
+   * No new ADR-016 variant — the draft is just a `create_note` whose
+   * path starts with `_drafts/` (D9 (a)).
+   */
+  private async runNewDraft(): Promise<void> {
+    const bundle = await this.getAgentBundle();
+    if (bundle === null) {
+      new Notice('Sagittarius: set your Anthropic API key in Settings → Sagittarius first.');
+      return;
+    }
+    if (bundle.deps.retrieval === undefined) {
+      new Notice(
+        'Sagittarius: retrieval layer not ready — set a HuggingFace token and build the index first.',
+      );
+      return;
+    }
+    const retrieval = bundle.deps.retrieval;
+
+    const modal = new NewDraftModal(this.app, this.settings.draftsDefaultDestination);
+    const inputs = await modal.prompt();
+    if (inputs === null) {
+      return;
+    }
+
+    const engine = new AnthropicDraftingEngine({
+      messages: bundle.deps.messages,
+      retrieval,
+      budget: bundle.deps.budget,
+      settings: () => ({
+        draftingModel: this.settings.draftingModel,
+        citationPolicy: this.settings.citationPolicy,
+        draftsDefaultDestination: this.settings.draftsDefaultDestination,
+        retrievalK: this.settings.retrievalK,
+      }),
+    });
+
+    const notice = new Notice(`Sagittarius: drafting '${inputs.topic}'…`, 0);
+    try {
+      const spec = inputs.destinationFolder.length > 0
+        ? { topic: inputs.topic, destinationFolder: inputs.destinationFolder }
+        : { topic: inputs.topic };
+      const draft = await engine.generate(spec);
+      notice.hide();
+      if (draft.strictFallback) {
+        new Notice(
+          'Sagittarius: drafting fell back from strict mode — review the draft for unsupported claims before promoting.',
+          10_000,
+        );
+      }
+      // Open the chat panel so its diff card surfaces the proposal —
+      // preserves ADR-016 D2 ("every write through the diff card").
+      // The user accepts/rejects in the panel; the proposal queue
+      // routing is bypassed because the transaction source stays
+      // undefined (in-app).
+      await this.activateChatView();
+      await bundle.deps.tools.execute('create_note', {
+        path: draft.path,
+        content: draftToFileContent(draft),
+      });
+      new Notice(`Sagittarius: draft proposal sent to the chat panel — review and accept.`);
+    } catch (err) {
+      notice.hide();
+      const msg = err instanceof Error ? err.message : String(err);
+      new Notice(`Sagittarius: drafting failed — ${msg}`);
+    }
+  }
+
+  /**
+   * Phase 8 (v1.1.1) — `Sagittarius: Promote draft` command handler.
+   * Active when the current file is under `_drafts/`. Routes through
+   * `move_note` so the user sees a path-rename diff card (ADR-016 D2
+   * invariant) and Obsidian's metadata cache auto-rewrites wikilinks.
+   */
+  private async runPromoteDraft(draftPath: string): Promise<void> {
+    const bundle = await this.getAgentBundle();
+    if (bundle === null) {
+      new Notice('Sagittarius: set your Anthropic API key in Settings → Sagittarius first.');
+      return;
+    }
+    let canonical: string;
+    try {
+      canonical = promotedPathFor(draftPath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      new Notice(`Sagittarius: ${msg}`);
+      return;
+    }
+    await this.activateChatView();
+    try {
+      await bundle.deps.tools.execute('move_note', {
+        from: draftPath,
+        to: canonical,
+      });
+      new Notice(`Sagittarius: promotion proposal sent to the chat panel — review and accept.`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      new Notice(`Sagittarius: promotion failed — ${msg}`);
+    }
+  }
+
   private async testMcpConnection(): Promise<void> {
     if (!this.settings.mcpEnabled) {
       new Notice('Sagittarius: MCP bridge is off. Enable it in settings first.');
