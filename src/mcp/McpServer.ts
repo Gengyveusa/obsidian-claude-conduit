@@ -1,8 +1,10 @@
 import type { ActivityLog } from '../activity/ActivityLog';
 import type { ToolRegistry } from '../agent/ToolRegistry';
+import type { WriteToolContext } from '../writes/WriteToolContext';
 
 import { HttpListener, type HandlerResult, type HttpHandler } from './HttpListener';
 import { McpHandler } from './McpHandler';
+import type { WriteGateSettings } from './WriteGate';
 
 /**
  * Phase 6.5 (v0.9.0) — MCP server per
@@ -42,10 +44,19 @@ export interface McpServerDeps {
   pluginVersion: string;
   /** Optional — events emitted with `source: 'mcp:<client>'` per ADR-021 D5. */
   activityLog?: ActivityLog;
+  /**
+   * Phase 6.7 (v1.0.9) — supply both `writeSettings` and `writeContext`
+   * to enable MCP write tools. Omit both to keep the bridge read-only.
+   * Supplying one without the other throws at handler construction.
+   */
+  writeSettings?: () => WriteGateSettings & { mcpWriteRateLimitPerHour: number };
+  writeContext?: WriteToolContext;
   /** Test-injectable logger. */
   logger?: { warn: (msg: string) => void; info?: (msg: string) => void };
   /** Test seam — inject a pre-constructed listener (and skip real bind). */
   listener?: HttpListener;
+  /** Test-injectable clock for the rate limiter; epoch ms. */
+  clock?: () => number;
 }
 
 export class McpServer {
@@ -66,6 +77,9 @@ export class McpServer {
       pluginVersion: deps.pluginVersion,
       logger: this.logger,
       ...(deps.activityLog !== undefined && { activityLog: deps.activityLog }),
+      ...(deps.writeSettings !== undefined && { writeSettings: deps.writeSettings }),
+      ...(deps.writeContext !== undefined && { writeContext: deps.writeContext }),
+      ...(deps.clock !== undefined && { clock: deps.clock }),
     });
     this.listener =
       deps.listener ??

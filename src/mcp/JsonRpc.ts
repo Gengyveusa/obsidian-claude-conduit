@@ -15,6 +15,15 @@ export const JSON_RPC_ERROR = {
   METHOD_NOT_FOUND: -32601,
   INVALID_PARAMS: -32602,
   INTERNAL_ERROR: -32603,
+  /**
+   * Implementation-defined server-side error per the JSON-RPC 2.0
+   * spec's reserved range (-32099 to -32000). Phase 6.7 uses this for
+   * write-gate rejections (path scope, rate limit, master toggle off,
+   * etc.) — the request is structurally valid but the policy layer
+   * refused. Picking the top of the range so future-defined codes
+   * (e.g., -32001 for auth-degraded) can sit beneath it.
+   */
+  SERVER_ERROR: -32000,
 } as const;
 
 export interface JsonRpcRequest {
