@@ -408,7 +408,7 @@ class RecordingActivityLog implements ActivityLog {
       ...input,
       id: `evt-${this.events.length}`,
       timestamp: Math.floor(Date.now() / 1000),
-    } as ActivityEvent);
+    });
   }
 
   list(): Promise<ActivityEvent[]> {
