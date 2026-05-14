@@ -350,6 +350,15 @@ function renderProposalDiff(parent: HTMLElement, diff: ProposalDiff): void {
     row.createSpan({ text: `  (${formatSize(diff.sizeBytes)})`, cls: 'sagittarius-diff-binary-size' });
     return;
   }
+  if (diff.kind === 'delete-file') {
+    // v1.0.7 — render every prior-content line as a deletion. Users
+    // need to see exactly what's vanishing before they approve.
+    const pre = parent.createEl('pre', { cls: 'sagittarius-diff-pre' });
+    for (const line of diff.content.split('\n')) {
+      pre.createDiv({ cls: 'sagittarius-diff-line-del', text: `- ${line}` });
+    }
+    return;
+  }
   const pre = parent.createEl('pre', { cls: 'sagittarius-diff-pre' });
   if (diff.kind === 'create-file') {
     for (const line of diff.content.split('\n')) {

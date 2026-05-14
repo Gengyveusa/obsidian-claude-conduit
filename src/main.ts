@@ -6,6 +6,7 @@ import { ToolRegistry } from './agent/ToolRegistry';
 import { makeAddFrontmatterTool } from './agent/tools/add_frontmatter';
 import { makeAppendToNoteTool } from './agent/tools/append_to_note';
 import { makeCreateNoteTool } from './agent/tools/create_note';
+import { makeDeleteNoteTool } from './agent/tools/delete_note';
 import { makeFileAssetTool } from './agent/tools/file_asset';
 import { makeLinkNotesTool } from './agent/tools/link_notes';
 import { makeMoveNoteTool } from './agent/tools/move_note';
@@ -71,6 +72,7 @@ import type {
   AddFrontmatterSuggestion,
   ArchiveStaleSuggestion,
   BrokenLinkFixSuggestion,
+  DuplicateCandidateSuggestion,
   MocAddSuggestion,
   NormalizeTagSuggestion,
   RouteSuggestion,
@@ -79,6 +81,10 @@ import { ChatView, CHAT_VIEW_TYPE } from './views/ChatView';
 import { QuickQuestionModal } from './views/QuickQuestionModal';
 import { ActivityView, ACTIVITY_VIEW_TYPE } from './views/ActivityView';
 import { SuggestionsView, SUGGESTIONS_VIEW_TYPE, destinationPathFor } from './views/SuggestionsView';
+import {
+  openDuplicateMergeModal,
+  type DuplicateMergeChoice,
+} from './views/DuplicateMergeModal';
 import { UndoConfirmModal } from './views/UndoConfirmModal';
 import { CallbackApprovalGate } from './writes/CallbackApprovalGate';
 import { JsonTransactionLog } from './writes/TransactionLog';
@@ -1125,6 +1131,129 @@ export default class SagittariusPlugin extends Plugin {
   }
 
   /**
+   * Phase 7 v1.0.7 — apply a `duplicate-candidate` suggestion per
+   * ADR-024 follow-up. Opens the `DuplicateMergeModal` so the user
+   * picks the keeper (which note stays). Then runs two sequential
+   * diff-card-gated writes:
+   *
+   *   1. `patch_note` on the keeper, appending the discard note's
+   *      body under a `## Merged from [[discard]]` marker section.
+   *   2. `delete_note` on the discard once the patch is applied.
+   *
+   * Failure modes:
+   *   - User cancels modal → `'cancelled'`, suggestion stays in queue.
+   *   - Patch rejected by user → `'rejected'`, suggestion stays.
+   *   - Patch conflict / error → `'error'`, no delete attempted.
+   *   - Patch applied but delete fails → `'error'` with a loud Notice;
+   *     user can `Undo last write` to roll back the merge, then resolve
+   *     the discard manually.
+   *   - Both succeed → `'merged'`, suggestion removed from queue.
+   */
+  async applyDuplicateCandidateSuggestion(s: DuplicateCandidateSuggestion): Promise<{
+    status: 'merged' | 'rejected' | 'cancelled' | 'error';
+    keep?: string;
+    discard?: string;
+  }> {
+    if (this.suggestionQueue === null) {
+      new Notice('Sagittarius: organization engine is off.');
+      return { status: 'error' };
+    }
+    const bundle = await this.getAgentBundle();
+    if (bundle === null) {
+      new Notice('Sagittarius: set your Anthropic API key first.');
+      return { status: 'error' };
+    }
+    const adapter = new VaultAdapterImpl(this.app);
+    let contentA: string;
+    let contentB: string;
+    try {
+      contentA = await adapter.read(s.notePath);
+      contentB = await adapter.read(s.otherPath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      new Notice(`Sagittarius: one of the duplicate notes is unreadable — ${msg}.`);
+      return { status: 'error' };
+    }
+
+    const choice: DuplicateMergeChoice = await openDuplicateMergeModal(this.app, {
+      pathA: s.notePath,
+      previewA: contentA.slice(0, 800),
+      pathB: s.otherPath,
+      previewB: contentB.slice(0, 800),
+      similarity: s.similarity,
+    });
+    if (choice === 'cancel') {
+      return { status: 'cancelled' };
+    }
+    const keep = choice === 'keep-a' ? s.notePath : s.otherPath;
+    const discard = choice === 'keep-a' ? s.otherPath : s.notePath;
+    const discardContent = choice === 'keep-a' ? contentB : contentA;
+
+    // Re-read the keeper through the tool layer so we get a fresh
+    // mtime+hash bound to whatever's on disk right now.
+    const readResult = (await bundle.deps.tools.execute('read_note', {
+      path: keep,
+    })) as { content: string; mtime: number; hash: string } | null;
+    if (readResult === null) {
+      new Notice(`Sagittarius: keeper note vanished — ${keep}.`);
+      return { status: 'error', keep, discard };
+    }
+
+    const lineCount = readResult.content.split('\n').length;
+    const mergedSection = [
+      '',
+      `## Merged from [[${stripMdSuffix(discard)}]]`,
+      '',
+      discardContent.trimEnd(),
+      '',
+    ].join('\n');
+
+    const patchResult = (await bundle.deps.tools.execute('patch_note', {
+      path: keep,
+      ops: [{ kind: 'insert', afterLine: lineCount, content: mergedSection }],
+      expectedMtime: readResult.mtime,
+      expectedHash: readResult.hash,
+    })) as { status: string; error?: string; reason?: string };
+
+    if (patchResult.status === 'rejected') {
+      return { status: 'rejected', keep, discard };
+    }
+    if (patchResult.status !== 'applied') {
+      const why = patchResult.error ?? patchResult.reason ?? 'unknown';
+      new Notice(`Sagittarius: merge patch failed on ${keep} — ${why}.`);
+      return { status: 'error', keep, discard };
+    }
+
+    // Patch applied. Now propose the delete.
+    const deleteResult = (await bundle.deps.tools.execute('delete_note', {
+      path: discard,
+    })) as { status: string; error?: string; reason?: string };
+
+    if (deleteResult.status !== 'applied') {
+      // Loud Notice — the merge happened but the discard didn't go.
+      // The user can `Undo last write` (which restores the keeper to
+      // its pre-merge content) or resolve the discard manually.
+      const why = deleteResult.error ?? deleteResult.reason ?? 'unknown';
+      new Notice(
+        `Sagittarius: merged into ${keep} but ${discard} delete failed — ${why}. ` +
+          'Run `Undo last write transaction` to roll back, or delete the file manually.',
+        20_000,
+      );
+      return { status: 'error', keep, discard };
+    }
+
+    await this.suggestionQueue.remove(s.id);
+    await this.activityLog?.record({
+      kind: 'suggestion.applied',
+      suggestionId: s.id,
+      suggestionKind: 'route',
+      notePath: keep,
+      writeToolName: 'patch_note',
+    });
+    return { status: 'merged', keep, discard };
+  }
+
+  /**
    * Phase 7 (v1.0.0) — `Sagittarius: Run curator` command. Builds a
    * fresh orchestrator with the user's enabled rules, runs a sweep,
    * converts findings into Suggestions, enqueues them via the Phase 5
@@ -1671,6 +1800,9 @@ export default class SagittariusPlugin extends Plugin {
       makeRenameNoteTool({ adapter, gate: this.approvalGate, ctx: writeCtx }),
     );
     tools.register(
+      makeDeleteNoteTool({ adapter, gate: this.approvalGate, ctx: writeCtx }),
+    );
+    tools.register(
       makeLinkNotesTool({ adapter, gate: this.approvalGate, ctx: writeCtx }),
     );
     tools.register(
@@ -1730,4 +1862,9 @@ export default class SagittariusPlugin extends Plugin {
 
     return { agent, deps: agentDeps };
   }
+}
+
+/** Strip a trailing `.md` from a vault path. Used to build clean `[[wikilinks]]`. */
+function stripMdSuffix(path: string): string {
+  return path.endsWith('.md') ? path.slice(0, -3) : path;
 }
