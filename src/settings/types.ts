@@ -110,6 +110,34 @@ export interface SagittariusSettings {
    * to fully apply (subsystems cache the dep at construction).
    */
   activityLogEnabled: boolean;
+
+  // Phase 6.5 MCP bridge (per ADR-021 D6)
+  /**
+   * Master switch for the MCP bridge. When on, Sagittarius exposes its
+   * read-only tools (`read_note`, `list_folder`, `search_vault`,
+   * `get_backlinks`, `get_graph_neighborhood`) over Model Context
+   * Protocol to external Claude clients (Claude Desktop, Claude Code).
+   * Default off — turning it on binds a localhost HTTP port and
+   * issues a bearer token.
+   */
+  mcpEnabled: boolean;
+  /**
+   * Localhost port to bind. Default 8765 per ADR-021 D6. Conflict =
+   * server refuses to start with a Notice; user picks a new port.
+   */
+  mcpPort: number;
+  /**
+   * SHA-256 hex hash of the bearer token. Generated on first enable;
+   * the raw token is shown once via "Reveal token" then re-hashed.
+   * Empty string = not yet generated; server refuses to start.
+   */
+  mcpToken: string;
+  /**
+   * Optional allowlist of MCP `clientInfo.name` values. Empty = any
+   * authenticated client may connect. Use to restrict the bridge to
+   * a specific external app (e.g. `['claude-desktop']`).
+   */
+  mcpAllowedClients: string[];
 }
 
 export const DEFAULT_SETTINGS: SagittariusSettings = {
@@ -147,4 +175,9 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
   organizationMocFolders: [],
 
   activityLogEnabled: true,
+
+  mcpEnabled: false,
+  mcpPort: 8765,
+  mcpToken: '',
+  mcpAllowedClients: [],
 };
