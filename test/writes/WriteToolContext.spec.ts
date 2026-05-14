@@ -164,4 +164,22 @@ describe('WriteToolContext', () => {
     expect(all).toHaveLength(1);
     expect(all[0].sessionId).toBe('turn-2');
   });
+
+  it('forwards source through to the committed Transaction (ADR-025 D5)', async () => {
+    ctx.begin('turn-mcp', 'mcp:claude-desktop');
+    ctx.record(appliedOp('mcp-write.md'));
+    const tx = await ctx.end();
+
+    expect(tx?.source).toBe('mcp:claude-desktop');
+    expect(tx?.sessionId).toBe('turn-mcp');
+    expect(tx?.ops[0].path).toBe('mcp-write.md');
+  });
+
+  it('omits source when not supplied (in-app chat path stays unchanged)', async () => {
+    ctx.begin('turn-inapp');
+    ctx.record(appliedOp('inapp.md'));
+    const tx = await ctx.end();
+
+    expect(tx?.source).toBeUndefined();
+  });
 });

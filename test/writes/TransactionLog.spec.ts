@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import type { ActivityLog } from '../../src/activity/ActivityLog';
+import type { ActivityEvent, ActivityEventInput } from '../../src/activity/types';
 import type { VaultAdapter, VaultStat } from '../../src/agent/types';
 import { JsonTransactionLog } from '../../src/writes/TransactionLog';
 import type { AppliedOp, InverseOp, Transaction } from '../../src/writes/types';
@@ -297,4 +299,132 @@ describe('JsonTransactionLog', () => {
       expect(all[0].sessionId).toBe('session-x');
     });
   });
+
+  describe('source attribution (ADR-025 D5)', () => {
+    it('persists source on the committed Transaction when provided', async () => {
+      const log = new JsonTransactionLog({
+        adapter,
+        path: LOG_PATH,
+        now: () => 1700_000_000_000,
+        randId: () => 'abcdef',
+      });
+      const tx = log.begin('session-1', 'mcp:claude-desktop');
+      tx.record(appliedOp());
+      const result = await tx.commit();
+
+      expect(result?.source).toBe('mcp:claude-desktop');
+      const parsed = JSON.parse(adapter.files.get(LOG_PATH)!) as Transaction[];
+      expect(parsed[0].source).toBe('mcp:claude-desktop');
+    });
+
+    it('omits source from the persisted record when not provided', async () => {
+      const log = new JsonTransactionLog({ adapter, path: LOG_PATH });
+      const tx = log.begin('session-1');
+      tx.record(appliedOp());
+      const result = await tx.commit();
+
+      expect(result?.source).toBeUndefined();
+      const parsed = JSON.parse(adapter.files.get(LOG_PATH)!) as Transaction[];
+      expect(parsed[0]).not.toHaveProperty('source');
+    });
+
+    it('survives sessionId being omitted (source-only transaction)', async () => {
+      const log = new JsonTransactionLog({ adapter, path: LOG_PATH });
+      const tx = log.begin(undefined, 'mcp:claude-code');
+      tx.record(appliedOp());
+      const result = await tx.commit();
+
+      expect(result?.sessionId).toBeUndefined();
+      expect(result?.source).toBe('mcp:claude-code');
+    });
+
+    it('propagates source to write.committed activity events', async () => {
+      const recorder = new RecordingActivityLog();
+      const log = new JsonTransactionLog({
+        adapter,
+        path: LOG_PATH,
+        activityLog: recorder,
+      });
+      const tx = log.begin('session-1', 'mcp:claude-desktop');
+      tx.record(appliedOp({ path: 'a.md' }));
+      tx.record(appliedOp({ path: 'b.md' }));
+      await tx.commit();
+
+      expect(recorder.events).toHaveLength(2);
+      expect(recorder.events.every((e) => e.source === 'mcp:claude-desktop')).toBe(true);
+      expect(recorder.events.map((e) => (e.kind === 'write.committed' ? e.path : null))).toEqual([
+        'a.md',
+        'b.md',
+      ]);
+    });
+
+    it('omits source from activity events when no source was set on the transaction', async () => {
+      const recorder = new RecordingActivityLog();
+      const log = new JsonTransactionLog({
+        adapter,
+        path: LOG_PATH,
+        activityLog: recorder,
+      });
+      const tx = log.begin('session-1');
+      tx.record(appliedOp());
+      await tx.commit();
+
+      expect(recorder.events).toHaveLength(1);
+      expect(recorder.events[0].source).toBeUndefined();
+    });
+
+    it('parses persisted transactions written before the source field existed', async () => {
+      // Simulate a v1.0.7-era file: no `source` key on any record.
+      const legacy: Transaction[] = [
+        {
+          id: '1700000000000-aaaaaa',
+          timestamp: 1_700_000_000,
+          sessionId: 'session-legacy',
+          ops: [appliedOp({ path: 'legacy.md' })],
+        },
+      ];
+      adapter.files.set(LOG_PATH, JSON.stringify(legacy));
+
+      const log = new JsonTransactionLog({ adapter, path: LOG_PATH });
+      const all = await log.recent();
+      expect(all).toHaveLength(1);
+      expect(all[0].source).toBeUndefined();
+      expect(all[0].sessionId).toBe('session-legacy');
+    });
+  });
 });
+
+/**
+ * Minimal `ActivityLog` test double. Captures every recorded event into
+ * `events` in call order. Doesn't validate input shape — the production
+ * code's own typing is the contract.
+ */
+class RecordingActivityLog implements ActivityLog {
+  readonly events: (ActivityEventInput & { id?: string; timestamp?: number })[] = [];
+
+  record(input: ActivityEventInput): Promise<ActivityEvent> {
+    this.events.push(input);
+    return Promise.resolve({
+      ...input,
+      id: `evt-${this.events.length}`,
+      timestamp: Math.floor(Date.now() / 1000),
+    } as ActivityEvent);
+  }
+
+  list(): Promise<ActivityEvent[]> {
+    return Promise.resolve([]);
+  }
+
+  size(): Promise<number> {
+    return Promise.resolve(this.events.length);
+  }
+
+  clear(): Promise<void> {
+    this.events.length = 0;
+    return Promise.resolve();
+  }
+
+  clearMatching(): Promise<number> {
+    throw new Error('RecordingActivityLog.clearMatching unused in this suite');
+  }
+}

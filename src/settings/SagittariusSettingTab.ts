@@ -40,6 +40,7 @@ export class SagittariusSettingTab extends PluginSettingTab {
     this.renderOrganizationSection(containerEl);
     this.renderActivitySection(containerEl);
     this.renderMcpSection(containerEl);
+    this.renderMcpWriteSection(containerEl);
     this.renderCuratorSection(containerEl);
     this.renderVoyageSection(containerEl);
   }
@@ -128,6 +129,115 @@ export class SagittariusSettingTab extends PluginSettingTab {
               .filter((s) => s.length > 0);
             await this.plugin.saveSettings();
           }),
+      );
+  }
+
+  private renderMcpWriteSection(parent: HTMLElement): void {
+    parent.createEl('h3', { text: 'MCP write-side (Phase 6.7)' });
+    parent.createEl('p', {
+      cls: 'setting-item-description',
+      text:
+        'Substrate for ADR-025 — exposing Sagittarius\'s 10 write tools over MCP. v1.0.8 ships ' +
+        'the settings + audit-trail plumbing only; tool exposure flips in v1.0.9 and the ' +
+        'pending-proposals UI lands in v1.1.0. Turning the toggle below on has no effect ' +
+        'until v1.0.9.',
+    });
+
+    new Setting(parent)
+      .setName('Enable MCP write-side')
+      .setDesc(
+        'Master switch per ADR-025 D1. Off = MCP clients only see the 5 read-only tools. ' +
+          'On = the 10 write tools appear in `tools/list` (once v1.0.9 ships) and route through ' +
+          'the diff card. Off by default.',
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.mcpWriteEnabled).onChange(async (value) => {
+          this.plugin.settings.mcpWriteEnabled = value;
+          await this.plugin.saveSettings();
+        }),
+      );
+
+    new Setting(parent)
+      .setName('Write-allowed clients')
+      .setDesc(
+        'Subset of `Allowed clients` above, restricted to write access. Per ADR-025 D6. ' +
+          'Empty = any authenticated client may write (when the master toggle is on). ' +
+          'Non-empty = only listed clients may call write tools; read access stays governed ' +
+          'by the regular allowlist.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('claude-desktop')
+          .setValue(this.plugin.settings.mcpWriteAllowedClients.join(', '))
+          .onChange(async (value) => {
+            this.plugin.settings.mcpWriteAllowedClients = value
+              .split(',')
+              .map((s) => s.trim())
+              .filter((s) => s.length > 0);
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(parent)
+      .setName('Write path prefixes')
+      .setDesc(
+        'Comma-separated vault-relative path prefixes per ADR-025 D7. A write proposal whose ' +
+          'target path doesn\'t start with any listed prefix is rejected at the MCP layer ' +
+          'before the diff card opens. Default `10-Inbox/`. Empty = no path scoping ' +
+          '(trust the diff card).',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('10-Inbox/, 20-Notes/')
+          .setValue(this.plugin.settings.mcpWritePathPrefixes.join(', '))
+          .onChange(async (value) => {
+            this.plugin.settings.mcpWritePathPrefixes = value
+              .split(',')
+              .map((s) => s.trim())
+              .filter((s) => s.length > 0);
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(parent)
+      .setName('Write rate limit (per hour)')
+      .setDesc(
+        'Max MCP-driven write proposals per rolling 60 minutes across all clients per ' +
+          'ADR-025 D9. 0 = disabled. Default 30/hour — generous for human-in-the-loop ' +
+          'flows but catches runaway agent loops.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('30')
+          .setValue(String(this.plugin.settings.mcpWriteRateLimitPerHour))
+          .onChange(async (value) => {
+            const trimmed = value.trim();
+            if (trimmed === '') {
+              return;
+            }
+            const n = parseInt(trimmed, 10);
+            if (!Number.isFinite(n) || n < 0 || String(n) !== trimmed) {
+              new Notice('Sagittarius: rate limit must be a non-negative integer.');
+              return;
+            }
+            this.plugin.settings.mcpWriteRateLimitPerHour = n;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(parent)
+      .setName('Allow high-risk tools (delete_note)')
+      .setDesc(
+        'Per ADR-025 D1, the destructive `delete_note` tool requires a second toggle. ' +
+          'Off (default) = MCP-driven `delete_note` calls are rejected even when the master ' +
+          'toggle is on. Other write tools (create, append, patch, rename, etc.) need only ' +
+          'the master toggle because their recovery path (undo) is trivial.',
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.mcpHighRiskToolsEnabled).onChange(async (value) => {
+          this.plugin.settings.mcpHighRiskToolsEnabled = value;
+          await this.plugin.saveSettings();
+        }),
       );
   }
 

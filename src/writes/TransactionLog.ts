@@ -21,7 +21,13 @@ import type { AppliedOp, Transaction } from './types';
  *   await tx.commit();  // persists; returns the finalized Transaction
  */
 export interface TransactionLog {
-  begin(sessionId?: string): TransactionBuilder;
+  /**
+   * Open a new transaction. `source` is recorded on the resulting
+   * `Transaction` (and propagated to `write.committed` activity events)
+   * per ADR-025 D5 — set it to `'mcp:<client>'` when opening on behalf
+   * of an external MCP caller. Omit for in-app chat turns.
+   */
+  begin(sessionId?: string, source?: string): TransactionBuilder;
   recent(limit?: number): Promise<Transaction[]>;
   /**
    * Pop the most-recent transaction off the log and persist the result.
@@ -80,7 +86,7 @@ export class JsonTransactionLog implements TransactionLog {
     }
   }
 
-  begin(sessionId?: string): TransactionBuilder {
+  begin(sessionId?: string, source?: string): TransactionBuilder {
     const startMs = this.now();
     const id = `${startMs}-${this.randId()}`;
     const ops: AppliedOp[] = [];
@@ -104,6 +110,7 @@ export class JsonTransactionLog implements TransactionLog {
           id,
           timestamp: Math.floor(startMs / 1000),
           ...(sessionId !== undefined && { sessionId }),
+          ...(source !== undefined && { source }),
           ops: [...ops],
         };
         await this.appendAndPersist(tx);
@@ -155,6 +162,7 @@ export class JsonTransactionLog implements TransactionLog {
           kind: 'write.committed',
           toolName: op.toolName,
           path: op.path,
+          ...(tx.source !== undefined && { source: tx.source }),
         });
       }
     }

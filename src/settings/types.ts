@@ -139,6 +139,49 @@ export interface SagittariusSettings {
    */
   mcpAllowedClients: string[];
 
+  // Phase 6.7 MCP write-side (per ADR-025; substrate lands in v1.0.8,
+  // tool exposure flips in v1.0.9, queue UI lands in v1.1.0).
+  /**
+   * Master switch for MCP write-side. When off (default), MCP clients
+   * only see the 5 read-only tools — the 10 write tools never appear
+   * in `tools/list` and any `tools/call` for a write tool returns
+   * `Method not found`. Per ADR-025 D1, off-by-default keeps the
+   * write blast-radius gated behind explicit user opt-in.
+   */
+  mcpWriteEnabled: boolean;
+  /**
+   * Per-client write-permissions subset of `mcpAllowedClients`. When
+   * non-empty, only the listed clients (matched by `clientInfo.name`)
+   * may call write tools. Empty = all authenticated clients may write
+   * if `mcpWriteEnabled` is on. Per ADR-025 D6 — read access can stay
+   * broad while write access is narrowed.
+   */
+  mcpWriteAllowedClients: string[];
+  /**
+   * Path-prefix allowlist for MCP-driven writes per ADR-025 D7. A
+   * write tool whose target path doesn't `startsWith` any of these
+   * prefixes is rejected at the MCP layer before the diff card opens.
+   * Default `['10-Inbox/']` mirrors the organization engine's watched-
+   * folders convention. Empty = no path scoping (trust the diff card).
+   */
+  mcpWritePathPrefixes: string[];
+  /**
+   * Soft rate limit per ADR-025 D9: max write proposals per rolling
+   * 60-minute window across all MCP clients combined. Beyond this,
+   * `tools/call` for a write tool returns a `'rate-limited'` JSON-RPC
+   * error. 0 = disabled. Default 30/hour.
+   */
+  mcpWriteRateLimitPerHour: number;
+  /**
+   * Per ADR-025 D1, the `delete_note` tool is destructive enough that
+   * MCP access requires an explicit second toggle on top of
+   * `mcpWriteEnabled`. Other write tools route through the diff card
+   * which makes them trivially reversible; deletions are reversible
+   * via undo but the recovery path requires the user to be present
+   * at Obsidian to notice the deletion happened. Default false.
+   */
+  mcpHighRiskToolsEnabled: boolean;
+
   // Phase 7 curator (per ADR-022 D2, D6)
   /**
    * Master switch for the curator. When off, `Sagittarius: Run curator`
@@ -218,6 +261,12 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
   mcpPort: 8765,
   mcpToken: '',
   mcpAllowedClients: [],
+
+  mcpWriteEnabled: false,
+  mcpWriteAllowedClients: [],
+  mcpWritePathPrefixes: ['10-Inbox/'],
+  mcpWriteRateLimitPerHour: 30,
+  mcpHighRiskToolsEnabled: false,
 
   curatorEnabled: false,
   curatorMaxPerSweep: 20,
