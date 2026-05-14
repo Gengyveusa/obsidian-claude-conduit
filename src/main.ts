@@ -84,6 +84,7 @@ import {
   ExternalProposalsView,
   EXTERNAL_PROPOSALS_VIEW_TYPE,
 } from './views/ExternalProposalsView';
+import { DraftsView, DRAFTS_VIEW_TYPE } from './views/DraftsView';
 import { NewDraftModal } from './views/NewDraftModal';
 import { SuggestionsView, SUGGESTIONS_VIEW_TYPE, destinationPathFor } from './views/SuggestionsView';
 import {
@@ -92,6 +93,7 @@ import {
 } from './views/DuplicateMergeModal';
 import { UndoConfirmModal } from './views/UndoConfirmModal';
 import { AnthropicDraftingEngine, draftToFileContent } from './drafts/DraftingEngine';
+import { DraftStore } from './drafts/DraftStore';
 import { promotedPathFor } from './drafts/paths';
 import { CallbackApprovalGate } from './writes/CallbackApprovalGate';
 import { ExternalProposalQueue } from './writes/ExternalProposalQueue';
@@ -167,6 +169,19 @@ export default class SagittariusPlugin extends Plugin {
    */
   readonly externalProposalQueue: ExternalProposalQueue = new ExternalProposalQueue();
   /**
+   * Phase 8 (v1.2.0) — discovery + metadata layer for the Drafts side
+   * panel per ADR-026 D5 (a). Constructed in `onload` once the
+   * `VaultAdapter` is available; `null` before that.
+   */
+  draftStore: DraftStore | null = null;
+  /**
+   * Phase 8 (v1.2.0) — status bar pill showing the count of files
+   * under `_drafts/` per ADR-026 D5 (a). Created in `onload`;
+   * refreshed on vault create/delete/rename and on plugin load.
+   * Hides itself when no drafts exist.
+   */
+  private draftsStatusBarEl: HTMLElement | null = null;
+  /**
    * Phase 6.7 (v1.1.0) — status bar pill showing pending external
    * proposal count per ADR-025 D4 (c). Created in `onload`; updated
    * on every `externalProposalQueue.onChange()`. Clicking opens the
@@ -237,6 +252,11 @@ export default class SagittariusPlugin extends Plugin {
       path: CURATOR_SKIP_PATTERNS_PATH,
     });
 
+    // Phase 8 (v1.2.0) — drafts store per ADR-026 D5 (a). Cheap (no
+    // I/O on construction); the side panel + status bar pill query
+    // it on demand.
+    this.draftStore = new DraftStore({ adapter: new VaultAdapterImpl(this.app) });
+
     this.registerView(CHAT_VIEW_TYPE, (leaf) => new ChatView(leaf, this));
     this.registerView(
       SUGGESTIONS_VIEW_TYPE,
@@ -246,6 +266,7 @@ export default class SagittariusPlugin extends Plugin {
       EXTERNAL_PROPOSALS_VIEW_TYPE,
       (leaf) => new ExternalProposalsView(leaf, this),
     );
+    this.registerView(DRAFTS_VIEW_TYPE, (leaf) => new DraftsView(leaf, this));
     this.registerView(ACTIVITY_VIEW_TYPE, (leaf) => new ActivityView(leaf, this));
 
     this.addRibbonIcon(RIBBON_ICON, PLUGIN_NAME, () => {
@@ -372,6 +393,32 @@ export default class SagittariusPlugin extends Plugin {
       'Sagittarius external proposals — click to open panel',
     );
     this.externalProposalsStatusBarEl.style.display = 'none';
+
+    // Phase 8 (v1.2.0) — drafts status bar pill per ADR-026 D5 (a).
+    // Lives next to the external-proposals pill. Hides when empty.
+    this.draftsStatusBarEl = this.addStatusBarItem();
+    this.draftsStatusBarEl.addClass('sagittarius-status-bar');
+    this.draftsStatusBarEl.style.cursor = 'pointer';
+    this.draftsStatusBarEl.addEventListener('click', () => {
+      void this.activateDraftsView();
+    });
+    this.draftsStatusBarEl.setAttribute(
+      'aria-label',
+      'Sagittarius drafts — click to open panel',
+    );
+    this.draftsStatusBarEl.style.display = 'none';
+    void this.refreshDraftsStatusBar();
+    // Refresh the pill on any vault change so promote/discard/external
+    // edits show up instantly. `registerEvent` ensures unload cleans
+    // these up. Obsidian's vault event API has per-event-name
+    // overloads so we register each one separately.
+    const pillRefresh = (): void => {
+      void this.refreshDraftsStatusBar();
+    };
+    this.registerEvent(this.app.vault.on('create', pillRefresh));
+    this.registerEvent(this.app.vault.on('delete', pillRefresh));
+    this.registerEvent(this.app.vault.on('rename', pillRefresh));
+
     let lastQueueSize = 0;
     this.externalProposalsQueueUnsubscribe = this.externalProposalQueue.onChange(() => {
       const size = this.externalProposalQueue.size();
@@ -414,6 +461,13 @@ export default class SagittariusPlugin extends Plugin {
           void this.runPromoteDraft(file.path);
         }
         return true;
+      },
+    });
+    this.addCommand({
+      id: 'open-drafts',
+      name: 'Open drafts panel',
+      callback: () => {
+        void this.activateDraftsView();
       },
     });
 
@@ -893,6 +947,43 @@ export default class SagittariusPlugin extends Plugin {
     }
     await leaf.setViewState({ type: ACTIVITY_VIEW_TYPE, active: true });
     await this.app.workspace.revealLeaf(leaf);
+  }
+
+  /** Open the drafts side panel (creates a leaf if missing). */
+  async activateDraftsView(): Promise<void> {
+    const existing = this.app.workspace.getLeavesOfType(DRAFTS_VIEW_TYPE);
+    if (existing.length > 0) {
+      await this.app.workspace.revealLeaf(existing[0]);
+      return;
+    }
+    const leaf = this.app.workspace.getRightLeaf(false);
+    if (leaf === null) {
+      new Notice('Sagittarius: could not open drafts panel.');
+      return;
+    }
+    await leaf.setViewState({ type: DRAFTS_VIEW_TYPE, active: true });
+    await this.app.workspace.revealLeaf(leaf);
+  }
+
+  /**
+   * Phase 8 (v1.2.0) — update the drafts status bar pill text +
+   * visibility based on the current draft count per ADR-026 D5 (a).
+   * Triggered on plugin load and every vault create/delete/rename.
+   */
+  private async refreshDraftsStatusBar(): Promise<void> {
+    const el = this.draftsStatusBarEl;
+    const store = this.draftStore;
+    if (el === null || store === null) {
+      return;
+    }
+    const count = await store.size();
+    if (count === 0) {
+      el.style.display = 'none';
+      el.setText('');
+      return;
+    }
+    el.style.display = '';
+    el.setText(`Sagittarius: ${count} draft${count === 1 ? '' : 's'}`);
   }
 
   /** Open the external proposals side panel (creates a leaf if missing). */
