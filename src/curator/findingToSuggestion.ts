@@ -3,6 +3,7 @@ import type {
   ArchiveStaleSuggestion,
   BrokenLinkFixSuggestion,
   DuplicateCandidateSuggestion,
+  NormalizeTagSuggestion,
   StaleReviewSuggestion,
   Suggestion,
 } from '../organization/types';
@@ -12,6 +13,7 @@ import { DUPLICATE_CANDIDATE_RULE_NAME } from './rules/DuplicateCandidateRule';
 import { MISSING_FRONTMATTER_RULE_NAME } from './rules/MissingFrontmatterRule';
 import { ORPHAN_RULE_NAME } from './rules/OrphanRule';
 import { STALE_NOTE_RULE_NAME } from './rules/StaleNoteRule';
+import { TAG_NORMALIZE_RULE_NAME } from './rules/TagNormalizeRule';
 import type { CuratorFinding } from './types';
 
 /**
@@ -146,6 +148,36 @@ export function findingToSuggestion(
         notePath: finding.notePath,
         otherPath,
         similarity,
+        reason: finding.reason,
+        confidence: finding.severity,
+      };
+      return suggestion;
+    }
+    case TAG_NORMALIZE_RULE_NAME: {
+      const payload = finding.payload as
+        | { cluster?: unknown; canonical?: unknown; nonCanonicalNoteCount?: unknown }
+        | undefined;
+      const cluster =
+        Array.isArray(payload?.cluster) &&
+        payload.cluster.every((t): t is string => typeof t === 'string')
+          ? payload.cluster
+          : null;
+      const canonical = typeof payload?.canonical === 'string' ? payload.canonical : null;
+      const nonCanonicalNoteCount =
+        typeof payload?.nonCanonicalNoteCount === 'number'
+          ? payload.nonCanonicalNoteCount
+          : null;
+      if (cluster === null || canonical === null || nonCanonicalNoteCount === null) {
+        return null;
+      }
+      const suggestion: NormalizeTagSuggestion = {
+        kind: 'normalize-tag',
+        id,
+        createdAt: Math.floor(timestamp / 1000),
+        notePath: finding.notePath,
+        cluster,
+        canonical,
+        nonCanonicalNoteCount,
         reason: finding.reason,
         confidence: finding.severity,
       };
