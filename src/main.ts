@@ -57,6 +57,7 @@ import { makeOrphanRule } from './curator/rules/OrphanRule';
 import { makeStaleNoteRule } from './curator/rules/StaleNoteRule';
 import { makeTagNormalizeRule } from './curator/rules/TagNormalizeRule';
 import { JsonSkipPatternStore, type SkipPatternStore } from './curator/SkipPatternStore';
+import { buildTagRenameOps } from './curator/tagRename';
 import { VaultCorpus } from './curator/VaultCorpus';
 import { MocAddClassifier } from './organization/MocAddClassifier';
 import { MocDiscovery } from './organization/MocDiscovery';
@@ -71,6 +72,7 @@ import type {
   ArchiveStaleSuggestion,
   BrokenLinkFixSuggestion,
   MocAddSuggestion,
+  NormalizeTagSuggestion,
   RouteSuggestion,
 } from './organization/types';
 import { ChatView, CHAT_VIEW_TYPE } from './views/ChatView';
@@ -1018,6 +1020,108 @@ export default class SagittariusPlugin extends Plugin {
       console.warn(`[sagittarius] apply add-frontmatter threw: ${msg}`);
       return 'error';
     }
+  }
+
+  /**
+   * Phase 7 v1.0.6 — apply a `normalize-tag` suggestion per ADR-024
+   * follow-up. Scans every markdown note in the vault, finds each that
+   * still uses a non-canonical cluster member, and proposes a
+   * line-level `patch_note` rewriting those occurrences to the
+   * canonical form. Each affected note routes through its own diff
+   * card (ADR-016 D2 invariant). Tally is surfaced as a single Notice.
+   *
+   * Returns `{applied, rejected, errored, conflict, scanned, skipped}`:
+   *   - `applied`: notes the user accepted in the diff card
+   *   - `rejected`: notes the user rejected in the diff card
+   *   - `errored`: read failures / tool errors / agent-bundle missing
+   *   - `conflict`: file changed between read + propose
+   *   - `scanned`: total .md paths walked
+   *   - `skipped`: notes with zero rewriteable occurrences (no-op)
+   */
+  async applyNormalizeTagSuggestion(s: NormalizeTagSuggestion): Promise<{
+    applied: number;
+    rejected: number;
+    errored: number;
+    conflict: number;
+    scanned: number;
+    skipped: number;
+  }> {
+    const result = {
+      applied: 0,
+      rejected: 0,
+      errored: 0,
+      conflict: 0,
+      scanned: 0,
+      skipped: 0,
+    };
+    if (this.suggestionQueue === null) {
+      new Notice('Sagittarius: organization engine is off.');
+      return result;
+    }
+    const bundle = await this.getAgentBundle();
+    if (bundle === null) {
+      new Notice('Sagittarius: set your Anthropic API key first.');
+      return result;
+    }
+    const canonical = s.canonical.toLowerCase();
+    const nonCanonical = new Set(
+      s.cluster
+        .map((t) => t.toLowerCase())
+        .filter((t) => t !== canonical),
+    );
+    if (nonCanonical.size === 0) {
+      new Notice('Sagittarius: nothing to canonicalize (canonical already matches).');
+      return result;
+    }
+    const adapter = new VaultAdapterImpl(this.app);
+    const corpus = new VaultCorpus(adapter, new MetadataCacheImpl(this.app));
+    const allMd = await corpus.listAllMarkdown();
+    result.scanned = allMd.length;
+
+    for (const path of allMd) {
+      const readResult = (await bundle.deps.tools.execute('read_note', {
+        path,
+      })) as { content: string; mtime: number; hash: string } | null;
+      if (readResult === null) {
+        // Note vanished between listing + read. Not an error worth
+        // counting — just move on.
+        continue;
+      }
+      const ops = buildTagRenameOps(readResult.content, nonCanonical, canonical);
+      if (ops.length === 0) {
+        result.skipped += 1;
+        continue;
+      }
+      let tool: { status: string; error?: string; reason?: string };
+      try {
+        tool = (await bundle.deps.tools.execute('patch_note', {
+          path,
+          ops,
+          expectedMtime: readResult.mtime,
+          expectedHash: readResult.hash,
+        })) as { status: string; error?: string; reason?: string };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[sagittarius] normalize-tag patch threw on ${path}: ${msg}`);
+        result.errored += 1;
+        continue;
+      }
+      if (tool.status === 'applied') {
+        result.applied += 1;
+        await this.activityLog?.record({
+          kind: 'write.committed',
+          toolName: 'patch_note',
+          path,
+        });
+      } else if (tool.status === 'rejected') {
+        result.rejected += 1;
+      } else if (tool.status === 'conflict') {
+        result.conflict += 1;
+      } else {
+        result.errored += 1;
+      }
+    }
+    return result;
   }
 
   /**
