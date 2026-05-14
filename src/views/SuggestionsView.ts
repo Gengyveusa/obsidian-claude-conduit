@@ -159,6 +159,10 @@ export class SuggestionsView extends ItemView {
       body.createEl('code', { text: s.missingFields.map((f) => `${f}:`).join(' ') });
     } else if (s.kind === 'stale-review') {
       body.appendText(`  (${s.staleDays}d)`);
+    } else if (s.kind === 'duplicate-candidate') {
+      body.appendText(`  ≈  `);
+      body.createEl('code', { text: s.otherPath });
+      body.appendText(`  (${Math.round(s.similarity * 100)}%)`);
     }
 
     const reason = row.createDiv({ cls: 'sagittarius-suggestion-reason' });
@@ -270,6 +274,24 @@ export class SuggestionsView extends ItemView {
         bulk: false,
       });
       await this.refresh();
+      return;
+    }
+    if (s.kind === 'duplicate-candidate') {
+      // v1.0.2 — informational pair. "Apply" opens both notes so the
+      // operator can compare + merge manually (true merge is Phase 8).
+      await this.plugin.app.workspace.openLinkText(s.notePath, '', false);
+      await this.plugin.app.workspace.openLinkText(s.otherPath, '', 'split');
+      const queue = this.plugin.suggestionQueue;
+      if (queue !== null) {
+        await queue.remove(s.id);
+      }
+      await this.plugin.activityLog?.record({
+        kind: 'suggestion.skipped',
+        suggestionId: s.id,
+        notePath: s.notePath,
+        bulk: false,
+      });
+      await this.refresh();
     }
   }
 
@@ -336,7 +358,8 @@ export class SuggestionsView extends ItemView {
       } else if (s.kind === 'add-frontmatter') {
         result = await this.plugin.applyAddFrontmatterSuggestion(s);
       } else {
-        // stale-review — skip in bulk apply (no automated apply path).
+        // stale-review + duplicate-candidate — informational only;
+        // bulk apply treats them as rejected so the count is honest.
         result = 'rejected';
       }
       if (result === 'applied') {
@@ -403,5 +426,7 @@ export function kindLabel(kind: Suggestion['kind']): string {
       return '＋ Frontmatter';
     case 'stale-review':
       return '⌛ Stale review';
+    case 'duplicate-candidate':
+      return '≈ Duplicate?';
   }
 }

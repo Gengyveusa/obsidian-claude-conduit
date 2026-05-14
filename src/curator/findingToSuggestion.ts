@@ -2,11 +2,13 @@ import type {
   AddFrontmatterSuggestion,
   ArchiveStaleSuggestion,
   BrokenLinkFixSuggestion,
+  DuplicateCandidateSuggestion,
   StaleReviewSuggestion,
   Suggestion,
 } from '../organization/types';
 
 import { BROKEN_LINK_RULE_NAME } from './rules/BrokenLinkRule';
+import { DUPLICATE_CANDIDATE_RULE_NAME } from './rules/DuplicateCandidateRule';
 import { MISSING_FRONTMATTER_RULE_NAME } from './rules/MissingFrontmatterRule';
 import { ORPHAN_RULE_NAME } from './rules/OrphanRule';
 import { STALE_NOTE_RULE_NAME } from './rules/StaleNoteRule';
@@ -122,6 +124,28 @@ export function findingToSuggestion(
         createdAt: Math.floor(timestamp / 1000),
         notePath: finding.notePath,
         staleDays,
+        reason: finding.reason,
+        confidence: finding.severity,
+      };
+      return suggestion;
+    }
+    case DUPLICATE_CANDIDATE_RULE_NAME: {
+      const payload = finding.payload as
+        | { otherPath?: unknown; similarity?: unknown }
+        | undefined;
+      const otherPath = typeof payload?.otherPath === 'string' ? payload.otherPath : null;
+      const similarity =
+        typeof payload?.similarity === 'number' ? payload.similarity : null;
+      if (otherPath === null || similarity === null) {
+        return null;
+      }
+      const suggestion: DuplicateCandidateSuggestion = {
+        kind: 'duplicate-candidate',
+        id,
+        createdAt: Math.floor(timestamp / 1000),
+        notePath: finding.notePath,
+        otherPath,
+        similarity,
         reason: finding.reason,
         confidence: finding.severity,
       };
