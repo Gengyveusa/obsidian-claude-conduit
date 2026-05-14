@@ -28,7 +28,8 @@ export type Suggestion =
   | ArchiveStaleSuggestion
   | AddFrontmatterSuggestion
   | StaleReviewSuggestion
-  | DuplicateCandidateSuggestion;
+  | DuplicateCandidateSuggestion
+  | NormalizeTagSuggestion;
 
 export interface RouteSuggestion {
   kind: 'route';
@@ -158,6 +159,29 @@ export interface DuplicateCandidateSuggestion {
   otherPath: string;
   /** Cosine similarity (0..1) from the embedding pre-filter. */
   similarity: number;
+  reason: string;
+  confidence: number;
+  deferred?: boolean;
+}
+
+/**
+ * Phase 7 v1.0.2 — "these tag variants are the same concept; pick
+ * one." Apply is informational in v1.0.2 (opens a guide note listing
+ * affected notes); v1.0.x may extend with batched patch_note apply
+ * to canonicalize the tag across all uses.
+ */
+export interface NormalizeTagSuggestion {
+  kind: 'normalize-tag';
+  id: string;
+  createdAt: number;
+  /** Empty string — this suggestion is corpus-wide, not note-bound. */
+  notePath: string;
+  /** All tag variants in the cluster (lowercase, no `#` prefix). */
+  cluster: string[];
+  /** LLM-picked canonical tag (lowercase, no `#`). */
+  canonical: string;
+  /** Number of notes using non-canonical variants. */
+  nonCanonicalNoteCount: number;
   reason: string;
   confidence: number;
   deferred?: boolean;

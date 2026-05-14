@@ -140,7 +140,11 @@ export class SuggestionsView extends ItemView {
     });
 
     const body = row.createDiv({ cls: 'sagittarius-suggestion-body' });
-    body.createEl('code', { text: s.notePath });
+    // Most kinds lead with the note path; corpus-wide suggestions
+    // (normalize-tag) skip the empty leading code element.
+    if (s.notePath.length > 0) {
+      body.createEl('code', { text: s.notePath });
+    }
     if (s.kind === 'route') {
       body.appendText('  →  ');
       body.createEl('code', { text: s.proposedFolder });
@@ -163,6 +167,13 @@ export class SuggestionsView extends ItemView {
       body.appendText(`  ≈  `);
       body.createEl('code', { text: s.otherPath });
       body.appendText(`  (${Math.round(s.similarity * 100)}%)`);
+    } else if (s.kind === 'normalize-tag') {
+      body.createEl('code', {
+        text: s.cluster.map((t) => `#${t}`).join(' / '),
+      });
+      body.appendText(`  →  `);
+      body.createEl('code', { text: `#${s.canonical}` });
+      body.appendText(`  (${s.nonCanonicalNoteCount} note(s))`);
     }
 
     const reason = row.createDiv({ cls: 'sagittarius-suggestion-reason' });
@@ -291,6 +302,29 @@ export class SuggestionsView extends ItemView {
         notePath: s.notePath,
         bulk: false,
       });
+      await this.refresh();
+      return;
+    }
+    if (s.kind === 'normalize-tag') {
+      // v1.0.2 — informational only. Apply removes the suggestion
+      // from the queue and surfaces a Notice telling the user how
+      // to manually canonicalize. v1.0.x can extend with a batched
+      // patch_note apply path that rewrites every occurrence.
+      const queue = this.plugin.suggestionQueue;
+      if (queue !== null) {
+        await queue.remove(s.id);
+      }
+      await this.plugin.activityLog?.record({
+        kind: 'suggestion.skipped',
+        suggestionId: s.id,
+        notePath: s.notePath,
+        bulk: false,
+      });
+      new Notice(
+        `Sagittarius: canonicalize \`#${s.canonical}\` across ${s.nonCanonicalNoteCount} note(s). ` +
+          `Variants: ${s.cluster.map((t) => `#${t}`).join(', ')}.`,
+        15_000,
+      );
       await this.refresh();
     }
   }
@@ -428,5 +462,7 @@ export function kindLabel(kind: Suggestion['kind']): string {
       return '⌛ Stale review';
     case 'duplicate-candidate':
       return '≈ Duplicate?';
+    case 'normalize-tag':
+      return '# Normalize tag';
   }
 }
