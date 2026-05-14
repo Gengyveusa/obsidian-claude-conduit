@@ -80,6 +80,10 @@ import type {
 import { ChatView, CHAT_VIEW_TYPE } from './views/ChatView';
 import { QuickQuestionModal } from './views/QuickQuestionModal';
 import { ActivityView, ACTIVITY_VIEW_TYPE } from './views/ActivityView';
+import {
+  ExternalProposalsView,
+  EXTERNAL_PROPOSALS_VIEW_TYPE,
+} from './views/ExternalProposalsView';
 import { SuggestionsView, SUGGESTIONS_VIEW_TYPE, destinationPathFor } from './views/SuggestionsView';
 import {
   openDuplicateMergeModal,
@@ -87,6 +91,7 @@ import {
 } from './views/DuplicateMergeModal';
 import { UndoConfirmModal } from './views/UndoConfirmModal';
 import { CallbackApprovalGate } from './writes/CallbackApprovalGate';
+import { ExternalProposalQueue } from './writes/ExternalProposalQueue';
 import { JsonTransactionLog } from './writes/TransactionLog';
 import { TransactionReplayer } from './writes/TransactionReplayer';
 import { WriteToolContext } from './writes/WriteToolContext';
@@ -149,6 +154,23 @@ export default class SagittariusPlugin extends Plugin {
    * actionable error to the LLM. See ADR-016 D2.
    */
   readonly approvalGate = new CallbackApprovalGate();
+  /**
+   * Phase 6.7 (v1.1.0) — pending-proposal store for MCP-driven writes
+   * per ADR-025 D2 (c) + D4 (b). Constructed unconditionally because
+   * it's cheap (empty map + listener set) and the `CallbackApprovalGate`
+   * routes external proposals here once `setRoutingDeps()` is called
+   * after `buildAgent()`. When the MCP write-side is off (master toggle
+   * off), nothing enqueues — the queue just sits empty.
+   */
+  readonly externalProposalQueue: ExternalProposalQueue = new ExternalProposalQueue();
+  /**
+   * Phase 6.7 (v1.1.0) — status bar pill showing pending external
+   * proposal count per ADR-025 D4 (c). Created in `onload`; updated
+   * on every `externalProposalQueue.onChange()`. Clicking opens the
+   * `ExternalProposalsView` panel.
+   */
+  private externalProposalsStatusBarEl: HTMLElement | null = null;
+  private externalProposalsQueueUnsubscribe: (() => void) | null = null;
   /**
    * Phase 5 organization-engine state. Lazily constructed when
    * `organizationEnabled` flips on. Null when the engine is off so the
@@ -216,6 +238,10 @@ export default class SagittariusPlugin extends Plugin {
     this.registerView(
       SUGGESTIONS_VIEW_TYPE,
       (leaf) => new SuggestionsView(leaf, this),
+    );
+    this.registerView(
+      EXTERNAL_PROPOSALS_VIEW_TYPE,
+      (leaf) => new ExternalProposalsView(leaf, this),
     );
     this.registerView(ACTIVITY_VIEW_TYPE, (leaf) => new ActivityView(leaf, this));
 
@@ -329,6 +355,41 @@ export default class SagittariusPlugin extends Plugin {
     );
     this.organizationStatusBarEl.style.display = 'none';
 
+    // Phase 6.7 (v1.1.0) — external proposals status bar pill per
+    // ADR-025 D4 (c). Always present; hides itself when the queue is
+    // empty so it never clutters the bar when nothing's pending.
+    this.externalProposalsStatusBarEl = this.addStatusBarItem();
+    this.externalProposalsStatusBarEl.addClass('sagittarius-status-bar');
+    this.externalProposalsStatusBarEl.style.cursor = 'pointer';
+    this.externalProposalsStatusBarEl.addEventListener('click', () => {
+      void this.activateExternalProposalsView();
+    });
+    this.externalProposalsStatusBarEl.setAttribute(
+      'aria-label',
+      'Sagittarius external proposals — click to open panel',
+    );
+    this.externalProposalsStatusBarEl.style.display = 'none';
+    let lastQueueSize = 0;
+    this.externalProposalsQueueUnsubscribe = this.externalProposalQueue.onChange(() => {
+      const size = this.externalProposalQueue.size();
+      // Detect new arrivals so we only fire the OS notification on
+      // enqueue (not on respond / clearAll).
+      const arrived = size > lastQueueSize;
+      lastQueueSize = size;
+      this.refreshExternalProposalsStatusBar();
+      if (arrived && this.settings.mcpWriteNotifyOnQueue) {
+        this.maybeFireExternalProposalNotification();
+      }
+    });
+
+    this.addCommand({
+      id: 'open-external-proposals',
+      name: 'Open external proposals panel',
+      callback: () => {
+        void this.activateExternalProposalsView();
+      },
+    });
+
     try {
       await this.initializeIndexing();
     } catch (err) {
@@ -429,6 +490,7 @@ export default class SagittariusPlugin extends Plugin {
         mcpWriteAllowedClients: this.settings.mcpWriteAllowedClients,
         mcpWritePathPrefixes: this.settings.mcpWritePathPrefixes,
         mcpWriteRateLimitPerHour: this.settings.mcpWriteRateLimitPerHour,
+        mcpWriteQueueTimeoutMs: this.settings.mcpWriteQueueTimeoutMs,
       }),
     });
     try {
@@ -525,6 +587,16 @@ export default class SagittariusPlugin extends Plugin {
     this.organizationWatcher = null;
     this.suggestionQueue = null;
     this.agentBundle = null;
+    // Phase 6.7 (v1.1.0) — reject every pending MCP write so the
+    // background `tools/call` promises resolve (and the MCP client
+    // sees a clean rejection) instead of dangling forever.
+    this.externalProposalQueue.clearAll(
+      'Sagittarius plugin unloaded before this proposal was reviewed.',
+    );
+    if (this.externalProposalsQueueUnsubscribe !== null) {
+      this.externalProposalsQueueUnsubscribe();
+      this.externalProposalsQueueUnsubscribe = null;
+    }
     this.engine?.close();
     delete this.engine;
     delete this.embedClient;
@@ -689,6 +761,88 @@ export default class SagittariusPlugin extends Plugin {
     }
     await leaf.setViewState({ type: ACTIVITY_VIEW_TYPE, active: true });
     await this.app.workspace.revealLeaf(leaf);
+  }
+
+  /** Open the external proposals side panel (creates a leaf if missing). */
+  async activateExternalProposalsView(): Promise<void> {
+    const existing = this.app.workspace.getLeavesOfType(EXTERNAL_PROPOSALS_VIEW_TYPE);
+    if (existing.length > 0) {
+      await this.app.workspace.revealLeaf(existing[0]);
+      return;
+    }
+    const leaf = this.app.workspace.getRightLeaf(false);
+    if (leaf === null) {
+      new Notice('Sagittarius: could not open external proposals panel.');
+      return;
+    }
+    await leaf.setViewState({ type: EXTERNAL_PROPOSALS_VIEW_TYPE, active: true });
+    await this.app.workspace.revealLeaf(leaf);
+  }
+
+  /**
+   * Phase 6.7 (v1.1.0) — fire a native OS notification when a new
+   * external proposal enqueues per ADR-025 D3. Click focuses Obsidian
+   * + opens the panel. Degrades gracefully when the `Notification`
+   * API is unavailable (some Linux WMs) or permission is denied —
+   * the status bar pill is the fallback indicator.
+   */
+  private maybeFireExternalProposalNotification(): void {
+    const NotifCtor = (globalThis as { Notification?: typeof Notification }).Notification;
+    if (typeof NotifCtor !== 'function') {
+      return; // Platform doesn't expose the API; fall back to status bar.
+    }
+    // Permission can be 'granted', 'denied', or 'default'. 'default'
+    // means we need to request it; we do so once per proposal arrival
+    // because the user expects a notification — denial is sticky.
+    const fire = (): void => {
+      const pending = this.externalProposalQueue.pending();
+      const latest = pending[pending.length - 1];
+      const sourceLabel = latest === undefined ? 'an MCP client' : prettifyMcpSource(latest.source);
+      const body =
+        latest === undefined
+          ? 'A write proposal is waiting for review.'
+          : `${sourceLabel} wants to ${latest.proposal.toolName.replace(/_/g, ' ')}. Click to review.`;
+      try {
+        const notif = new NotifCtor('Sagittarius — write proposal pending', { body });
+        notif.onclick = (): void => {
+          void this.activateExternalProposalsView();
+        };
+      } catch {
+        // Some Linux WMs throw despite reporting 'granted'. Pill is the fallback.
+      }
+    };
+    if (NotifCtor.permission === 'granted') {
+      fire();
+      return;
+    }
+    if (NotifCtor.permission === 'denied') {
+      return;
+    }
+    void NotifCtor.requestPermission().then((perm) => {
+      if (perm === 'granted') {
+        fire();
+      }
+    });
+  }
+
+  /**
+   * Phase 6.7 (v1.1.0) — update the status bar pill text + visibility
+   * based on the current external-proposal queue size per ADR-025 D4 (c).
+   * Subscribed via `externalProposalQueue.onChange` in `onload`.
+   */
+  private refreshExternalProposalsStatusBar(): void {
+    const el = this.externalProposalsStatusBarEl;
+    if (el === null) {
+      return;
+    }
+    const count = this.externalProposalQueue.size();
+    if (count === 0) {
+      el.style.display = 'none';
+      el.setText('');
+      return;
+    }
+    el.style.display = '';
+    el.setText(`Sagittarius: ${count} pending`);
   }
 
   /**
@@ -1783,6 +1937,16 @@ export default class SagittariusPlugin extends Plugin {
     });
     const writeCtx = new WriteToolContext(txLog);
 
+    // Phase 6.7 (v1.1.0) — late-bind the routing deps on the singleton
+    // approval gate per ADR-025 D4 (b). The gate now sees
+    // `writeCtx.currentSource()` and routes external proposals to the
+    // plugin-level `externalProposalQueue`. In-app chat (source =
+    // undefined) keeps using the ChatView callback path.
+    this.approvalGate.setRoutingDeps({
+      ctx: writeCtx,
+      externalQueue: this.externalProposalQueue,
+    });
+
     const tools = new ToolRegistry();
     tools.register(makeReadNoteTool(adapter));
     tools.register(makeListFolderTool(adapter));
@@ -1880,4 +2044,13 @@ export default class SagittariusPlugin extends Plugin {
 /** Strip a trailing `.md` from a vault path. Used to build clean `[[wikilinks]]`. */
 function stripMdSuffix(path: string): string {
   return path.endsWith('.md') ? path.slice(0, -3) : path;
+}
+
+/** Friendly label for an MCP source string in user-facing notifications. */
+function prettifyMcpSource(source: string): string {
+  if (source.startsWith('mcp:')) {
+    const name = source.slice(4);
+    return name.length === 0 ? 'an MCP client' : name;
+  }
+  return source;
 }

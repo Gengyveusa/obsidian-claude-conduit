@@ -53,8 +53,18 @@ export interface McpHandlerDeps {
    * values without bouncing the MCP server when settings flip. Per
    * ADR-025 D1+D6+D7+D9. Omit to disable write-side entirely (the
    * handler then behaves identically to v0.9.x).
+   *
+   * v1.1.0 (Slice 3) adds `mcpWriteQueueTimeoutMs` for the D2 (c)
+   * hybrid block-then-queue transport — registry.execute races
+   * against this timeout; on expiry the MCP response returns `queued`
+   * while the underlying tool keeps running in the background and
+   * commits to `TransactionLog` when the user eventually responds in
+   * the external-proposals side panel.
    */
-  writeSettings?: () => WriteGateSettings & { mcpWriteRateLimitPerHour: number };
+  writeSettings?: () => WriteGateSettings & {
+    mcpWriteRateLimitPerHour: number;
+    mcpWriteQueueTimeoutMs: number;
+  };
   /**
    * Phase 6.7 (v1.0.9) — the singleton `WriteToolContext` the in-app
    * agent uses. McpHandler calls `begin()`/`end()` around each write
@@ -83,7 +93,10 @@ export class McpHandler {
   private readonly logger: { warn: (msg: string) => void };
   private readonly activityLog: ActivityLog | undefined;
   private readonly writeSettings:
-    | (() => WriteGateSettings & { mcpWriteRateLimitPerHour: number })
+    | (() => WriteGateSettings & {
+        mcpWriteRateLimitPerHour: number;
+        mcpWriteQueueTimeoutMs: number;
+      })
     | undefined;
   private readonly writeContext: WriteToolContext | undefined;
   private readonly clock: () => number;
@@ -232,6 +245,18 @@ export class McpHandler {
       );
       return successResponse(req.id, errorContent);
     }
+    if (result.kind === 'queued') {
+      // Per ADR-025 D2 (c) hybrid — the timeout fired before the user
+      // approved. The tool keeps running in the background; when the
+      // user eventually responds via the side panel, the transaction
+      // commits and emits its own `write.committed` event. We skip
+      // the surface-level activity event here so the operator doesn't
+      // see a phantom "applied" before the actual apply.
+      return successResponse(
+        req.id,
+        wrapToolResult({ status: 'queued', message: result.message }),
+      );
+    }
 
     // Record successful invocation in the activity stream with the
     // `source:` field attributing it to the MCP client. For write
@@ -296,17 +321,29 @@ export class McpHandler {
 
   /**
    * Execute a write tool inside a transaction tagged with
-   * `source: 'mcp:<client>'`. Returns a structured result so the
-   * caller distinguishes "everything fine" from "tool surfaced a
-   * domain error" from "infrastructure rejection".
+   * `source: 'mcp:<client>'` per ADR-025 D5. Implements the D2 (c)
+   * hybrid block-then-queue transport: races `registry.execute`
+   * against `mcpWriteQueueTimeoutMs`. If exec wins, commits and
+   * returns the result; if timeout wins, returns `'queued'` while
+   * the tool keeps running in the background — when the user
+   * eventually approves/rejects via the side panel, the transaction
+   * still commits (or abandons) and the `TransactionLog` emits its
+   * own `write.committed` event with `source`.
+   *
+   * Returns a four-way `ExecuteOutcome`:
+   *   `ok`             — tool ran synchronously, transaction committed
+   *   `tool-error`     — tool threw; transaction abandoned
+   *   `error-response` — infrastructure refused (ctx busy, etc.)
+   *   `queued`         — timeout expired; user must respond in panel
    */
   private async executeWriteCall(toolName: string, args: unknown): Promise<ExecuteOutcome> {
     if (this.writeContext === undefined) {
       // Same defensive guard as runWriteGates — should be unreachable.
       return { kind: 'error-response', message: 'MCP write-side has no transaction context.' };
     }
+    const writeContext = this.writeContext;
     try {
-      this.writeContext.begin(undefined, this.clientName);
+      writeContext.begin(undefined, this.clientName);
     } catch (err) {
       // The singleton context is open — typically because in-app chat
       // is mid-turn. We don't preempt; surface a clear retry signal.
@@ -319,15 +356,57 @@ export class McpHandler {
           'Retry the MCP write shortly.',
       };
     }
-    try {
-      const value = await this.registry.execute(toolName, args);
-      await this.writeContext.end();
-      return { kind: 'ok', value };
-    } catch (err) {
-      this.writeContext.abandon();
-      const message = err instanceof Error ? err.message : String(err);
-      return { kind: 'tool-error', message };
+
+    // Drive the tool to completion (or background, on timeout). The
+    // IIFE wraps in try/catch so this promise NEVER rejects — that
+    // matters because after a timeout the MCP handler has already
+    // returned 'queued' and any later rejection would be unhandled.
+    const execPromise: Promise<SyncExecuteOutcome> = (async () => {
+      try {
+        const value = await this.registry.execute(toolName, args);
+        await writeContext.end();
+        return { kind: 'ok', value };
+      } catch (err) {
+        try {
+          writeContext.abandon();
+        } catch {
+          // abandon() should never throw, but defend against future changes.
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        return { kind: 'tool-error', message };
+      }
+    })();
+
+    const timeoutMs = this.writeSettings?.()?.mcpWriteQueueTimeoutMs ?? 30_000;
+    if (timeoutMs <= 0) {
+      // Pure-synchronous mode (operator disabled the queue).
+      return await execPromise;
     }
+
+    const timeoutPromise = new Promise<typeof TIMEOUT_SENTINEL>((resolve) => {
+      const handle = setTimeout(() => resolve(TIMEOUT_SENTINEL), timeoutMs);
+      // Don't keep Node alive in tests; no-op in Electron renderer.
+      (handle as unknown as { unref?: () => void }).unref?.();
+    });
+    const winner = await Promise.race([execPromise, timeoutPromise]);
+    if (winner === TIMEOUT_SENTINEL) {
+      // execPromise keeps running. Attach a logger for any unexpected
+      // failure path the IIFE doesn't already swallow (defensive — the
+      // IIFE already does, but ts-strict mode wants the .then anyway).
+      void execPromise.then((outcome) => {
+        if (outcome.kind === 'tool-error') {
+          this.logger.warn(
+            `queued mcp write '${toolName}' resolved with tool-error: ${outcome.message}`,
+          );
+        }
+      });
+      return {
+        kind: 'queued',
+        message:
+          'Proposal queued — review it in the Sagittarius external-proposals panel.',
+      };
+    }
+    return winner;
   }
 
   /**
@@ -347,16 +426,26 @@ export class McpHandler {
 }
 
 /**
- * Three-way result from `executeWriteCall` / `executeReadCall`:
+ * Result of an MCP tool dispatch:
  *
- *   `ok`             — tool ran and returned `value`.
+ *   `ok`             — tool ran synchronously and returned `value`.
  *   `tool-error`     — tool threw; turn into an MCP `tools/call` result
  *                       with `isError: true` (the SDK convention for
  *                       domain-level tool failures vs. transport bugs).
  *   `error-response` — infrastructure refused (write context unavailable,
  *                       deps missing, etc.); turn into a JSON-RPC error.
+ *   `queued`         — ADR-025 D2 (c) timeout expired; the tool keeps
+ *                       running in the background until the user
+ *                       responds in the side panel. The MCP response
+ *                       returns immediately so the LLM client isn't
+ *                       blocked.
  */
-type ExecuteOutcome =
+type SyncExecuteOutcome =
   | { kind: 'ok'; value: unknown }
   | { kind: 'tool-error'; message: string }
   | { kind: 'error-response'; message: string };
+
+type ExecuteOutcome = SyncExecuteOutcome | { kind: 'queued'; message: string };
+
+/** Sentinel for the timeout branch in the race. Unique symbol prevents clashes. */
+const TIMEOUT_SENTINEL = Symbol('mcp-write-queue-timeout');

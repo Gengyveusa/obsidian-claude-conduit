@@ -49,7 +49,10 @@ export interface McpServerDeps {
    * to enable MCP write tools. Omit both to keep the bridge read-only.
    * Supplying one without the other throws at handler construction.
    */
-  writeSettings?: () => WriteGateSettings & { mcpWriteRateLimitPerHour: number };
+  writeSettings?: () => WriteGateSettings & {
+    mcpWriteRateLimitPerHour: number;
+    mcpWriteQueueTimeoutMs: number;
+  };
   writeContext?: WriteToolContext;
   /** Test-injectable logger. */
   logger?: { warn: (msg: string) => void; info?: (msg: string) => void };

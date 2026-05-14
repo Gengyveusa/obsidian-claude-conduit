@@ -24,6 +24,7 @@ import type { AppliedOp, Transaction } from './types';
  */
 export class WriteToolContext {
   private builder: TransactionBuilder | null = null;
+  private openSource: string | undefined;
 
   constructor(private readonly txLog: TransactionLog) {}
 
@@ -34,6 +35,10 @@ export class WriteToolContext {
    * it to `'mcp:<client>'` when opening on behalf of an external MCP
    * caller. Omit for in-app chat turns (the `ConduitAgent` does just
    * that).
+   *
+   * The source is also exposed via `currentSource()` so the
+   * `CallbackApprovalGate` can route MCP-driven proposals to the
+   * external-proposal queue rather than the in-app diff card.
    */
   begin(sessionId?: string, source?: string): void {
     if (this.builder !== null) {
@@ -44,6 +49,7 @@ export class WriteToolContext {
       );
     }
     this.builder = this.txLog.begin(sessionId, source);
+    this.openSource = source;
   }
 
   /** Record an applied op into the current transaction. Throws if no transaction is open. */
@@ -69,6 +75,7 @@ export class WriteToolContext {
     }
     const result = await this.builder.commit();
     this.builder = null;
+    this.openSource = undefined;
     return result;
   }
 
@@ -84,10 +91,23 @@ export class WriteToolContext {
     }
     this.builder.abandon();
     this.builder = null;
+    this.openSource = undefined;
   }
 
   /** True if a transaction is open. */
   isOpen(): boolean {
     return this.builder !== null;
+  }
+
+  /**
+   * Phase 6.7 (v1.1.0) — the `source` passed to the most-recent
+   * `begin()`, or `undefined` when no transaction is open or when the
+   * caller didn't supply one. The `CallbackApprovalGate` reads this to
+   * decide whether a proposal should route through the in-app diff
+   * card (in-app source = `undefined`) or the external-proposal queue
+   * (MCP source = `'mcp:<client>'`) per ADR-025 D4.
+   */
+  currentSource(): string | undefined {
+    return this.openSource;
   }
 }

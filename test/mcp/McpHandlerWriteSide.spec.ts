@@ -138,6 +138,7 @@ type WriteSettings = {
   mcpWriteAllowedClients: string[];
   mcpWritePathPrefixes: string[];
   mcpWriteRateLimitPerHour: number;
+  mcpWriteQueueTimeoutMs: number;
 };
 
 const DEFAULT_WRITE_SETTINGS: WriteSettings = {
@@ -146,6 +147,9 @@ const DEFAULT_WRITE_SETTINGS: WriteSettings = {
   mcpWriteAllowedClients: [],
   mcpWritePathPrefixes: ['10-Inbox/'],
   mcpWriteRateLimitPerHour: 30,
+  // Disabled by default in this spec — the queue-timeout race is covered
+  // by a dedicated spec (test/mcp/McpHandlerQueueTimeout.spec.ts).
+  mcpWriteQueueTimeoutMs: 0,
 };
 
 function makeHarness(): Harness {
