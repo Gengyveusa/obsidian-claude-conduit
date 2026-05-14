@@ -239,6 +239,48 @@ export class SagittariusSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }),
       );
+
+    new Setting(parent)
+      .setName('Queue timeout (ms)')
+      .setDesc(
+        'Per ADR-025 D2 (c) hybrid — the MCP request blocks waiting for your approval ' +
+          'up to this many milliseconds, then returns `queued` while the proposal stays ' +
+          'alive in the External proposals panel for later review. Default 30000 (30 s). ' +
+          'Set to 0 to disable the queue path (pure synchronous block — testing only).',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('30000')
+          .setValue(String(this.plugin.settings.mcpWriteQueueTimeoutMs))
+          .onChange(async (value) => {
+            const trimmed = value.trim();
+            if (trimmed === '') {
+              return;
+            }
+            const n = parseInt(trimmed, 10);
+            if (!Number.isFinite(n) || n < 0 || String(n) !== trimmed) {
+              new Notice('Sagittarius: queue timeout must be a non-negative integer.');
+              return;
+            }
+            this.plugin.settings.mcpWriteQueueTimeoutMs = n;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(parent)
+      .setName('Native notification on proposal arrival')
+      .setDesc(
+        'Per ADR-025 D3 — fire an OS notification when an MCP write proposal lands ' +
+          'in the queue. Click focuses Obsidian and opens the External proposals panel. ' +
+          'Default on; opt-out per ADR-019 D6 convention. Platforms without a working ' +
+          'Notification API degrade silently to the status bar pill.',
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.mcpWriteNotifyOnQueue).onChange(async (value) => {
+          this.plugin.settings.mcpWriteNotifyOnQueue = value;
+          await this.plugin.saveSettings();
+        }),
+      );
   }
 
   private renderCuratorSection(parent: HTMLElement): void {

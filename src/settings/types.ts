@@ -181,6 +181,27 @@ export interface SagittariusSettings {
    * at Obsidian to notice the deletion happened. Default false.
    */
   mcpHighRiskToolsEnabled: boolean;
+  /**
+   * Per ADR-025 D2 (c) — hybrid block-then-queue timeout. When an MCP
+   * write proposal arrives, `McpHandler` races `registry.execute`
+   * against this timeout. If the user approves/rejects within the
+   * window the MCP response carries the result; on timeout the
+   * response carries `'queued'` and the proposal stays alive in the
+   * external-proposals side panel until the user responds (the file
+   * still writes on eventual accept). Default 30000 ms; 0 disables
+   * the queue path entirely (pure synchronous block — recommended
+   * only for testing).
+   */
+  mcpWriteQueueTimeoutMs: number;
+  /**
+   * Per ADR-025 D3 — when a write proposal queues, fire an Electron
+   * `Notification` ("Sagittarius: write proposal pending from
+   * Claude Desktop. Click to review."). Click focuses Obsidian and
+   * opens the external-proposals panel. Default true; opt-out per
+   * ADR-019 D6 convention. Platforms where the Notification API
+   * fails silently (some Linux WMs) degrade to status-bar-pill only.
+   */
+  mcpWriteNotifyOnQueue: boolean;
 
   // Phase 7 curator (per ADR-022 D2, D6)
   /**
@@ -267,6 +288,8 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
   mcpWritePathPrefixes: ['10-Inbox/'],
   mcpWriteRateLimitPerHour: 30,
   mcpHighRiskToolsEnabled: false,
+  mcpWriteQueueTimeoutMs: 30_000,
+  mcpWriteNotifyOnQueue: true,
 
   curatorEnabled: false,
   curatorMaxPerSweep: 20,
