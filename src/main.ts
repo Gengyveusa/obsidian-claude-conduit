@@ -39,6 +39,8 @@ import { openSqliteEngine } from './retrieval/openEngine';
 import { RetrievalLayer } from './retrieval/RetrievalLayer';
 import type { SqliteEngine } from './retrieval/SqliteEngine';
 import { JsonActivityLog, type ActivityLog } from './activity/ActivityLog';
+import { generateBearerToken, hashToken } from './mcp/auth';
+import { McpServer } from './mcp/McpServer';
 import { SagittariusSettingTab } from './settings/SagittariusSettingTab';
 import { DEFAULT_SETTINGS, type SagittariusSettings } from './settings/types';
 import { CuratorOrchestrator } from './curator/CuratorOrchestrator';
@@ -123,6 +125,12 @@ export default class SagittariusPlugin extends Plugin {
   private organizationSweepHandle: number | null = null;
   private organizationStatusBarEl: HTMLElement | null = null;
   private agentBundle: AgentBundle | null = null;
+  /**
+   * Phase 6.5 (v0.9.0 PR 4) — MCP bridge instance. Constructed lazily
+   * in `refreshMcpServer()` when `settings.mcpEnabled` flips on and
+   * the token is configured. Null when the bridge is off.
+   */
+  private mcpServer: McpServer | null = null;
   private engine?: SqliteEngine;
   private embedClient?: EmbedClient;
   private indexCoordinator?: IndexCoordinator;
@@ -277,6 +285,69 @@ export default class SagittariusPlugin extends Plugin {
     // outside the initializeIndexing try/catch because a failure here
     // shouldn't block the rest of the plugin.
     this.refreshOrganizationEngine();
+    void this.refreshMcpServer();
+  }
+
+  /**
+   * Phase 6.5 (v0.9.0 PR 4) — (re-)wire the MCP bridge based on
+   * current settings. Called on plugin load + whenever the user
+   * toggles `mcpEnabled` / changes the port / regenerates the token.
+   * Tears down the existing server (if any) before constructing a
+   * fresh one with the current config.
+   */
+  async refreshMcpServer(): Promise<void> {
+    if (this.mcpServer !== null) {
+      await this.mcpServer.stop();
+      this.mcpServer = null;
+    }
+    if (!this.settings.mcpEnabled) {
+      return;
+    }
+    if (this.settings.mcpToken.length === 0) {
+      new Notice(
+        'Sagittarius: MCP enabled but no token configured. Generate one in settings.',
+      );
+      return;
+    }
+    const bundle = await this.getAgentBundle();
+    if (bundle === null) {
+      new Notice('Sagittarius: MCP needs an Anthropic API key.');
+      return;
+    }
+    const server = new McpServer({
+      tokenHash: this.settings.mcpToken,
+      port: this.settings.mcpPort,
+      allowedClients: this.settings.mcpAllowedClients,
+      toolRegistry: bundle.deps.tools,
+      pluginVersion: this.manifest.version,
+      ...(this.activityLog !== null && { activityLog: this.activityLog }),
+    });
+    try {
+      await server.start();
+      this.mcpServer = server;
+      new Notice(`Sagittarius: MCP bridge listening on 127.0.0.1:${this.settings.mcpPort}.`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[sagittarius] MCP bridge failed to start: ${msg}`);
+      new Notice(`Sagittarius: MCP bridge failed to start — ${msg}`);
+      await this.activityLog?.record({
+        kind: 'error',
+        source: 'mcp',
+        message: `bridge failed to start: ${msg}`,
+      });
+    }
+  }
+
+  /**
+   * v0.9.0 PR 4 — generate a fresh bearer token, hash it, persist the
+   * hash, return the raw token for one-time display in settings.
+   * Caller is responsible for showing it to the user.
+   */
+  async generateMcpToken(): Promise<string> {
+    const token = generateBearerToken();
+    this.settings.mcpToken = await hashToken(token);
+    await this.saveSettings();
+    return token;
   }
 
   override onunload(): void {
@@ -284,6 +355,8 @@ export default class SagittariusPlugin extends Plugin {
       clearInterval(this.organizationSweepHandle);
       this.organizationSweepHandle = null;
     }
+    void this.mcpServer?.stop();
+    this.mcpServer = null;
     this.organizationWatcher?.stop();
     this.organizationWatcher = null;
     this.suggestionQueue = null;

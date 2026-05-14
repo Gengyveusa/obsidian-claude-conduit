@@ -1,3 +1,4 @@
+import type { ActivityLog } from '../activity/ActivityLog';
 import type { ToolRegistry } from '../agent/ToolRegistry';
 
 import {
@@ -36,6 +37,8 @@ export interface McpHandlerDeps {
   toolRegistry: ToolRegistry;
   /** Plugin version string surfaced in `initialize` `serverInfo.version`. */
   pluginVersion: string;
+  /** Optional activity log — records `write.committed`-style events with `source: 'mcp:<client>'`. */
+  activityLog?: ActivityLog;
   /** Test-injectable logger. */
   logger?: { warn: (msg: string) => void };
 }
@@ -52,11 +55,19 @@ export class McpHandler {
   private readonly registry: ToolRegistry;
   private readonly pluginVersion: string;
   private readonly logger: { warn: (msg: string) => void };
+  private readonly activityLog: ActivityLog | undefined;
+  /**
+   * Client name captured during `initialize` and used as the `source:` suffix on
+   * activity events recorded for subsequent `tools/call` requests. Falls back
+   * to `'mcp'` when no client identifies itself.
+   */
+  private clientName = 'mcp';
 
   constructor(deps: McpHandlerDeps) {
     this.registry = deps.toolRegistry;
     this.pluginVersion = deps.pluginVersion;
     this.logger = deps.logger ?? { warn: (msg) => console.warn(`[mcp-handler] ${msg}`) };
+    this.activityLog = deps.activityLog;
   }
 
   async handle(rawBody: unknown): Promise<JsonRpcResponse> {
@@ -88,6 +99,19 @@ export class McpHandler {
   }
 
   private onInitialize(req: JsonRpcRequest): JsonRpcResponse {
+    // Capture clientInfo.name from the handshake so subsequent activity
+    // events can attribute themselves (`source: 'mcp:<client>'`).
+    const params = req.params;
+    if (params !== null && typeof params === 'object') {
+      const obj = params as Record<string, unknown>;
+      const clientInfo = obj.clientInfo;
+      if (clientInfo !== null && typeof clientInfo === 'object') {
+        const name = (clientInfo as Record<string, unknown>).name;
+        if (typeof name === 'string' && name.length > 0) {
+          this.clientName = `mcp:${name}`;
+        }
+      }
+    }
     return successResponse(req.id, {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {
@@ -133,14 +157,32 @@ export class McpHandler {
       );
     }
     const args = obj.arguments ?? {};
+    const toolName = obj.name;
     let toolResult: unknown;
     try {
-      toolResult = await this.registry.execute(obj.name, args);
+      toolResult = await this.registry.execute(toolName, args);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const errorContent: McpToolCallResult = wrapToolResult(`tool error: ${message}`, true);
+      await this.activityLog?.record({
+        kind: 'error',
+        source: this.clientName,
+        message: `mcp tool '${toolName}' failed: ${message}`,
+      });
       return successResponse(req.id, errorContent);
     }
+    // Record successful invocation in the activity stream with the
+    // `source:` field attributing it to the MCP client. Read-only tools
+    // aren't `write.committed` — use a synthetic write.committed-style
+    // event so the operator can scan "what did Claude Desktop do today".
+    await this.activityLog?.record({
+      kind: 'write.committed',
+      source: this.clientName,
+      toolName,
+      path: typeof (args as Record<string, unknown>).path === 'string'
+        ? ((args as Record<string, unknown>).path as string)
+        : '',
+    });
     return successResponse(req.id, wrapToolResult(toolResult));
   }
 }

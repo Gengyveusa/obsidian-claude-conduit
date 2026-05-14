@@ -39,8 +39,96 @@ export class SagittariusSettingTab extends PluginSettingTab {
     this.renderWriteLayerSection(containerEl);
     this.renderOrganizationSection(containerEl);
     this.renderActivitySection(containerEl);
+    this.renderMcpSection(containerEl);
     this.renderCuratorSection(containerEl);
     this.renderVoyageSection(containerEl);
+  }
+
+  private renderMcpSection(parent: HTMLElement): void {
+    parent.createEl('h3', { text: 'MCP bridge (Phase 6.5)' });
+    parent.createEl('p', {
+      cls: 'setting-item-description',
+      text:
+        'Expose Sagittarius\'s 5 read-only tools over Model Context Protocol so external Claude clients ' +
+        '(Claude Desktop, Claude Code) can query your vault. Localhost-only, bearer-auth. Off by default. Per ADR-021.',
+    });
+
+    new Setting(parent)
+      .setName('Enable MCP bridge')
+      .setDesc(
+        'When on, the plugin binds a localhost HTTP port and accepts authenticated MCP requests. ' +
+          'Off = no port bound, no listener.',
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.mcpEnabled).onChange(async (value) => {
+          this.plugin.settings.mcpEnabled = value;
+          await this.plugin.saveSettings();
+          await this.plugin.refreshMcpServer();
+        }),
+      );
+
+    new Setting(parent)
+      .setName('Port')
+      .setDesc('Localhost port. Default 8765. Change requires a toggle off/on to re-bind.')
+      .addText((text) =>
+        text
+          .setPlaceholder('8765')
+          .setValue(String(this.plugin.settings.mcpPort))
+          .onChange(async (value) => {
+            const trimmed = value.trim();
+            if (trimmed === '') {
+              return;
+            }
+            const n = parseInt(trimmed, 10);
+            if (!Number.isFinite(n) || n <= 0 || n > 65535 || String(n) !== trimmed) {
+              new Notice('Sagittarius: port must be an integer 1–65535.');
+              return;
+            }
+            this.plugin.settings.mcpPort = n;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(parent)
+      .setName('Bearer token')
+      .setDesc(
+        this.plugin.settings.mcpToken.length === 0
+          ? 'No token set. Click "Generate" to mint one. The raw value will display once — copy it then.'
+          : 'A token is configured (hashed at rest). Click "Regenerate" to mint a fresh one — the old one stops working.',
+      )
+      .addButton((btn) => {
+        btn
+          .setButtonText(this.plugin.settings.mcpToken.length === 0 ? 'Generate' : 'Regenerate')
+          .onClick(async () => {
+            const raw = await this.plugin.generateMcpToken();
+            new Notice(
+              `Sagittarius: token = ${raw}\n\n` +
+                'Copy now — won\'t show again. Paste into your MCP client config.',
+              30_000,
+            );
+            await this.plugin.refreshMcpServer();
+            this.display();
+          });
+      });
+
+    new Setting(parent)
+      .setName('Allowed clients')
+      .setDesc(
+        'Comma-separated `clientInfo.name` allowlist (e.g. "claude-desktop"). ' +
+          'Empty = accept any authenticated client. Used for accountability + later filtering.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('claude-desktop, claude-code')
+          .setValue(this.plugin.settings.mcpAllowedClients.join(', '))
+          .onChange(async (value) => {
+            this.plugin.settings.mcpAllowedClients = value
+              .split(',')
+              .map((s) => s.trim())
+              .filter((s) => s.length > 0);
+            await this.plugin.saveSettings();
+          }),
+      );
   }
 
   private renderCuratorSection(parent: HTMLElement): void {

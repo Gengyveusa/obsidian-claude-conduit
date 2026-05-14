@@ -65,6 +65,7 @@ export class McpServer {
       toolRegistry: deps.toolRegistry,
       pluginVersion: deps.pluginVersion,
       logger: this.logger,
+      ...(deps.activityLog !== undefined && { activityLog: deps.activityLog }),
     });
     this.listener =
       deps.listener ??
