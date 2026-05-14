@@ -23,7 +23,9 @@
 
 export type Suggestion =
   | RouteSuggestion
-  | MocAddSuggestion;
+  | MocAddSuggestion
+  | BrokenLinkFixSuggestion
+  | ArchiveStaleSuggestion;
 
 export interface RouteSuggestion {
   kind: 'route';
@@ -54,6 +56,48 @@ export interface MocAddSuggestion {
    * omitted, append at end (matches `link_notes`'s default behavior).
    */
   mocAnchor?: string;
+  reason: string;
+  confidence: number;
+  deferred?: boolean;
+}
+
+/**
+ * Phase 7 (v1.0.0) — "this note links to something that doesn't exist."
+ * Apply removes the broken link from the note's content. The
+ * `brokenTarget` is the target as it appears in the wikilink
+ * (no `.md`); `linkText` is the full `[[...]]` form for find-and-replace.
+ * Per ADR-022 D4, apply runs through `patch_note`.
+ */
+export interface BrokenLinkFixSuggestion {
+  kind: 'broken-link-fix';
+  id: string;
+  createdAt: number;
+  /** The note that contains the broken link. */
+  notePath: string;
+  /** Link target as written (no `.md`, no surrounding brackets). */
+  brokenTarget: string;
+  /** Full wikilink as it appears in the note, e.g. `[[Old Note]]` or `[[Old Note|alias]]`. */
+  linkText: string;
+  reason: string;
+  confidence: number;
+  deferred?: boolean;
+}
+
+/**
+ * Phase 7 (v1.0.0) — "this note hasn't been touched in N days and
+ * nothing links to it." Apply moves to `_archive/<year>/`. Per
+ * ADR-022 D4 the apply tool is `move_note`.
+ */
+export interface ArchiveStaleSuggestion {
+  kind: 'archive-stale';
+  id: string;
+  createdAt: number;
+  /** The note to archive. */
+  notePath: string;
+  /** Proposed destination folder (no trailing slash), e.g. `_archive/2025`. */
+  proposedFolder: string;
+  /** Days since last modification, surfaced in the panel row. */
+  staleDays: number;
   reason: string;
   confidence: number;
   deferred?: boolean;

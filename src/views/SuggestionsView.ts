@@ -132,7 +132,7 @@ export class SuggestionsView extends ItemView {
     const head = row.createDiv({ cls: 'sagittarius-suggestion-head' });
     head.createSpan({
       cls: 'sagittarius-suggestion-kind',
-      text: s.kind === 'route' ? '↪ Move' : '+ Add to MOC',
+      text: kindLabel(s.kind),
     });
     head.createSpan({
       cls: 'sagittarius-suggestion-confidence',
@@ -140,14 +140,20 @@ export class SuggestionsView extends ItemView {
     });
 
     const body = row.createDiv({ cls: 'sagittarius-suggestion-body' });
+    body.createEl('code', { text: s.notePath });
     if (s.kind === 'route') {
-      body.createEl('code', { text: s.notePath });
       body.appendText('  →  ');
       body.createEl('code', { text: s.proposedFolder });
-    } else {
-      body.createEl('code', { text: s.notePath });
+    } else if (s.kind === 'moc-add') {
       body.appendText('  +→  ');
       body.createEl('code', { text: s.mocPath });
+    } else if (s.kind === 'archive-stale') {
+      body.appendText(`  →  `);
+      body.createEl('code', { text: s.proposedFolder });
+      body.appendText(`  (${s.staleDays}d)`);
+    } else if (s.kind === 'broken-link-fix') {
+      body.appendText(`  ✗  `);
+      body.createEl('code', { text: s.linkText });
     }
 
     const reason = row.createDiv({ cls: 'sagittarius-suggestion-reason' });
@@ -193,15 +199,24 @@ export class SuggestionsView extends ItemView {
       await this.refresh();
       return;
     }
-    const result = await this.plugin.applyRouteSuggestion(s);
-    if (result === 'applied') {
-      new Notice(`Sagittarius: moved ${s.notePath} → ${s.proposedFolder}`);
-    } else if (result === 'rejected') {
-      new Notice('Sagittarius: rejected in diff card — suggestion removed.');
-    } else {
-      new Notice(`Sagittarius: apply did not complete — see console.`);
+    if (s.kind === 'route') {
+      const result = await this.plugin.applyRouteSuggestion(s);
+      if (result === 'applied') {
+        new Notice(`Sagittarius: moved ${s.notePath} → ${s.proposedFolder}`);
+      } else if (result === 'rejected') {
+        new Notice('Sagittarius: rejected in diff card — suggestion removed.');
+      } else {
+        new Notice(`Sagittarius: apply did not complete — see console.`);
+      }
+      await this.refresh();
+      return;
     }
-    await this.refresh();
+    // v1.0.0 Phase 7 kinds (broken-link-fix, archive-stale) — apply paths
+    // ship in v1.0.0 PR 3; for now the row renders but Apply is a no-op
+    // notice. Skip still works.
+    new Notice(
+      `Sagittarius: apply for ${s.kind} ships in v1.0.0 PR 3. Use Skip to dismiss for now.`,
+    );
   }
 
   private async handleSkip(s: Suggestion): Promise<void> {
@@ -254,21 +269,32 @@ export class SuggestionsView extends ItemView {
     let applied = 0;
     let rejected = 0;
     let errored = 0;
+    let unsupported = 0;
     for (const s of snapshot) {
-      const result =
-        s.kind === 'moc-add'
-          ? await this.plugin.applyMocAddSuggestion(s)
-          : await this.plugin.applyRouteSuggestion(s);
+      let result: 'applied' | 'rejected' | 'error' | 'unsupported';
+      if (s.kind === 'moc-add') {
+        result = await this.plugin.applyMocAddSuggestion(s);
+      } else if (s.kind === 'route') {
+        result = await this.plugin.applyRouteSuggestion(s);
+      } else {
+        // v1.0.0 Phase 7 kinds — apply path lands in PR 3. Apply-all
+        // skips them silently for now (counted in the summary).
+        result = 'unsupported';
+      }
       if (result === 'applied') {
         applied += 1;
       } else if (result === 'rejected') {
         rejected += 1;
+      } else if (result === 'unsupported') {
+        unsupported += 1;
       } else {
         errored += 1;
       }
     }
+    const unsupportedTail =
+      unsupported > 0 ? `, ${unsupported} unsupported (v1.0.0 PR 3 lands their apply)` : '';
     new Notice(
-      `Sagittarius: applied ${applied}, rejected ${rejected}, errors ${errored}.`,
+      `Sagittarius: applied ${applied}, rejected ${rejected}, errors ${errored}${unsupportedTail}.`,
     );
     await this.refresh();
   }
@@ -306,4 +332,18 @@ export class SuggestionsView extends ItemView {
 export function destinationPathFor(s: RouteSuggestion): string {
   const basename = s.notePath.split('/').pop() ?? s.notePath;
   return s.proposedFolder.length > 0 ? `${s.proposedFolder}/${basename}` : basename;
+}
+
+/** Short label shown in the suggestion-row header. Exported for tests. */
+export function kindLabel(kind: Suggestion['kind']): string {
+  switch (kind) {
+    case 'route':
+      return '↪ Move';
+    case 'moc-add':
+      return '+ Add to MOC';
+    case 'broken-link-fix':
+      return '✗ Broken link';
+    case 'archive-stale':
+      return '📦 Archive stale';
+  }
 }
