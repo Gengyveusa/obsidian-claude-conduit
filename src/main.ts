@@ -44,7 +44,9 @@ import { DEFAULT_SETTINGS, type SagittariusSettings } from './settings/types';
 import { CuratorOrchestrator } from './curator/CuratorOrchestrator';
 import { findingToSuggestion } from './curator/findingToSuggestion';
 import { makeBrokenLinkRule } from './curator/rules/BrokenLinkRule';
+import { makeMissingFrontmatterRule } from './curator/rules/MissingFrontmatterRule';
 import { makeOrphanRule } from './curator/rules/OrphanRule';
+import { makeStaleNoteRule } from './curator/rules/StaleNoteRule';
 import { VaultCorpus } from './curator/VaultCorpus';
 import { MocAddClassifier } from './organization/MocAddClassifier';
 import { MocDiscovery } from './organization/MocDiscovery';
@@ -55,6 +57,7 @@ import {
 } from './organization/OrganizationWatcher';
 import { JsonSuggestionQueue, type SuggestionQueue } from './organization/SuggestionQueue';
 import type {
+  AddFrontmatterSuggestion,
   ArchiveStaleSuggestion,
   BrokenLinkFixSuggestion,
   MocAddSuggestion,
@@ -748,6 +751,63 @@ export default class SagittariusPlugin extends Plugin {
   }
 
   /**
+   * Phase 7 (v1.0.1) — apply an add-frontmatter suggestion. Inserts
+   * each missing field with an empty value via the `add_frontmatter`
+   * tool (Phase 4). The user fills the values in afterward.
+   */
+  async applyAddFrontmatterSuggestion(
+    s: AddFrontmatterSuggestion,
+  ): Promise<'applied' | 'rejected' | 'error'> {
+    if (this.suggestionQueue === null) {
+      new Notice('Sagittarius: organization engine is off.');
+      return 'error';
+    }
+    const bundle = await this.getAgentBundle();
+    if (bundle === null) {
+      new Notice('Sagittarius: set your Anthropic API key first.');
+      return 'error';
+    }
+    try {
+      const fieldsToAdd: Record<string, string> = {};
+      for (const field of s.missingFields) {
+        fieldsToAdd[field] = '';
+      }
+      const result = (await bundle.deps.tools.execute('add_frontmatter', {
+        path: s.notePath,
+        fields: fieldsToAdd,
+      })) as { status: string; error?: string; reason?: string };
+      if (result.status === 'applied') {
+        await this.suggestionQueue.remove(s.id);
+        await this.activityLog?.record({
+          kind: 'suggestion.applied',
+          suggestionId: s.id,
+          suggestionKind: 'route',
+          notePath: s.notePath,
+          writeToolName: 'add_frontmatter',
+        });
+        return 'applied';
+      }
+      if (result.status === 'rejected') {
+        await this.suggestionQueue.remove(s.id);
+        await this.activityLog?.record({
+          kind: 'suggestion.rejected',
+          suggestionId: s.id,
+          notePath: s.notePath,
+        });
+        return 'rejected';
+      }
+      console.warn(
+        `[sagittarius] apply add-frontmatter failed: ${result.error ?? result.reason ?? ''}`,
+      );
+      return 'error';
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[sagittarius] apply add-frontmatter threw: ${msg}`);
+      return 'error';
+    }
+  }
+
+  /**
    * Phase 7 (v1.0.0) — `Sagittarius: Run curator` command. Builds a
    * fresh orchestrator with the user's enabled rules, runs a sweep,
    * converts findings into Suggestions, enqueues them via the Phase 5
@@ -775,6 +835,21 @@ export default class SagittariusPlugin extends Plugin {
     if (rules['orphan'] !== false) {
       orchestrator.register(
         makeOrphanRule({ staleThresholdDays: this.settings.curatorStaleNoteThresholdDays }),
+      );
+    }
+    if (
+      rules['missing-frontmatter'] !== false &&
+      Object.keys(this.settings.curatorFolderSchemas).length > 0
+    ) {
+      orchestrator.register(
+        makeMissingFrontmatterRule({ schemas: this.settings.curatorFolderSchemas }),
+      );
+    }
+    if (rules['stale-note'] !== false) {
+      orchestrator.register(
+        makeStaleNoteRule({
+          staleThresholdDays: this.settings.curatorStaleNoteThresholdDays * 2,
+        }),
       );
     }
 
