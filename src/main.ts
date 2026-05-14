@@ -126,6 +126,11 @@ export default class SagittariusPlugin extends Plugin {
   activityLog: ActivityLog | null = null;
   private organizationWatcher: OrganizationWatcher | null = null;
   private organizationSweepHandle: number | null = null;
+  /**
+   * Phase 7 v1.0.3 — scheduled curator sweep interval handle. Set via
+   * `refreshCuratorSchedule()`; cleared in `onunload`.
+   */
+  private curatorScheduleHandle: number | null = null;
   private organizationStatusBarEl: HTMLElement | null = null;
   private agentBundle: AgentBundle | null = null;
   /**
@@ -297,6 +302,33 @@ export default class SagittariusPlugin extends Plugin {
     // shouldn't block the rest of the plugin.
     this.refreshOrganizationEngine();
     void this.refreshMcpServer();
+    this.refreshCuratorSchedule();
+  }
+
+  /**
+   * Phase 7 v1.0.3 — (re-)wire the scheduled curator sweep based on
+   * current settings. Called on plugin load + whenever the user
+   * toggles the relevant setting via `SagittariusSettingTab`.
+   * Idempotent stop → start with the new interval.
+   */
+  refreshCuratorSchedule(): void {
+    if (this.curatorScheduleHandle !== null) {
+      clearInterval(this.curatorScheduleHandle);
+      this.curatorScheduleHandle = null;
+    }
+    if (!this.settings.curatorEnabled) {
+      return;
+    }
+    const intervalDays = this.settings.curatorSweepIntervalDays;
+    if (intervalDays <= 0) {
+      return;
+    }
+    const intervalMs = intervalDays * 24 * 60 * 60 * 1000;
+    const handle = setInterval(() => {
+      void this.runCurator();
+    }, intervalMs) as unknown as number;
+    this.registerInterval(handle);
+    this.curatorScheduleHandle = handle;
   }
 
   /**
@@ -416,6 +448,10 @@ export default class SagittariusPlugin extends Plugin {
     if (this.organizationSweepHandle !== null) {
       clearInterval(this.organizationSweepHandle);
       this.organizationSweepHandle = null;
+    }
+    if (this.curatorScheduleHandle !== null) {
+      clearInterval(this.curatorScheduleHandle);
+      this.curatorScheduleHandle = null;
     }
     void this.mcpServer?.stop();
     this.mcpServer = null;

@@ -1,9 +1,9 @@
 {
   "id": "obsidian-claude-conduit",
   "name": "Sagittarius — Claude Conduit",
-  "version": "0.9.2",
+  "version": "1.0.3",
   "minAppVersion": "1.4.0",
-  "description": "Native Obsidian plugin for Claude. Chat with your vault, diff-first writes, organization suggestions, activity stream, MCP bridge (read-only) to external Claude clients.",
+  "description": "Native Obsidian plugin for Claude — vault-aware chat, diff-first writes, organization + curator engines, activity stream, MCP bridge to external clients.",
   "author": "GengyveUSA",
   "authorUrl": "https://github.com/gengyveusa",
   "fundingUrl": "",

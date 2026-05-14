@@ -207,6 +207,32 @@ export class SagittariusSettingTab extends PluginSettingTab {
       );
 
     new Setting(parent)
+      .setName('Scheduled sweep (days)')
+      .setDesc(
+        'v1.0.3 — periodically run the curator on a timer, in days. ' +
+          '0 (default) = manual only via the `Run curator` command per ADR-022 D2.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('0')
+          .setValue(String(this.plugin.settings.curatorSweepIntervalDays))
+          .onChange(async (value) => {
+            const trimmed = value.trim();
+            if (trimmed === '') {
+              return;
+            }
+            const n = parseInt(trimmed, 10);
+            if (!Number.isFinite(n) || n < 0 || String(n) !== trimmed) {
+              new Notice('Sagittarius: schedule interval must be a non-negative integer.');
+              return;
+            }
+            this.plugin.settings.curatorSweepIntervalDays = n;
+            await this.plugin.saveSettings();
+            this.plugin.refreshCuratorSchedule();
+          }),
+      );
+
+    new Setting(parent)
       .setName('Enable broken-link rule')
       .setDesc('Detect wikilinks pointing to non-existent notes.')
       .addToggle((toggle) =>
