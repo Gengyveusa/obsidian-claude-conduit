@@ -289,20 +289,26 @@ export class SuggestionsView extends ItemView {
       return;
     }
     if (s.kind === 'duplicate-candidate') {
-      // v1.0.2 — informational pair. "Apply" opens both notes so the
-      // operator can compare + merge manually (true merge is Phase 8).
-      await this.plugin.app.workspace.openLinkText(s.notePath, '', false);
-      await this.plugin.app.workspace.openLinkText(s.otherPath, '', 'split');
-      const queue = this.plugin.suggestionQueue;
-      if (queue !== null) {
-        await queue.remove(s.id);
+      // v1.0.7 — structured merge apply path per ADR-024 follow-up.
+      // Opens the keeper-picker modal, then runs patch_note (append
+      // discard's body under a `## Merged from [[discard]]` marker)
+      // followed by delete_note. Each write blocks on its own diff
+      // card. Cancelling the modal leaves the suggestion in queue
+      // for later.
+      const outcome = await this.plugin.applyDuplicateCandidateSuggestion(s);
+      if (outcome.status === 'cancelled') {
+        // No queue mutation — user can still skip or reapply.
+        return;
       }
-      await this.plugin.activityLog?.record({
-        kind: 'suggestion.skipped',
-        suggestionId: s.id,
-        notePath: s.notePath,
-        bulk: false,
-      });
+      if (outcome.status === 'merged') {
+        new Notice(
+          `Sagittarius: merged into ${outcome.keep ?? ''}, deleted ${outcome.discard ?? ''}.`,
+        );
+      } else if (outcome.status === 'rejected') {
+        new Notice('Sagittarius: merge rejected in diff card.');
+      } else {
+        new Notice('Sagittarius: duplicate-merge errored — see console / Notices.');
+      }
       await this.refresh();
       return;
     }

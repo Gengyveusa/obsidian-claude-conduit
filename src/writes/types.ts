@@ -123,6 +123,17 @@ export type ProposalDiff =
       path: string;
       /** Decoded byte length. Lets the diff card show "image.png · 42.1 KB". */
       sizeBytes: number;
+    }
+  | {
+      /**
+       * v1.0.7 — proposal to delete a file. The diff card shows every
+       * line as a `-` so the user sees exactly what's about to vanish.
+       * Inverse op is `{ kind: 'write-file', path, content }` —
+       * recreates the file with the prior content on undo.
+       */
+      kind: 'delete-file';
+      path: string;
+      content: string;
     };
 
 /**
