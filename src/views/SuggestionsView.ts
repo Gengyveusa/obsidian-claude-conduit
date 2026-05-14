@@ -307,25 +307,39 @@ export class SuggestionsView extends ItemView {
       return;
     }
     if (s.kind === 'normalize-tag') {
-      // v1.0.2 — informational only. Apply removes the suggestion
-      // from the queue and surfaces a Notice telling the user how
-      // to manually canonicalize. v1.0.x can extend with a batched
-      // patch_note apply path that rewrites every occurrence.
+      // v1.0.6 — structured apply path per ADR-024 follow-up. Scans
+      // every .md, finds notes still using a non-canonical cluster
+      // member, proposes one diff-card-gated patch_note per affected
+      // note. The user confirms each one individually; sequential
+      // because each diff card blocks the next.
+      new Notice(`Sagittarius: scanning vault for #${s.canonical}…`);
+      const outcome = await this.plugin.applyNormalizeTagSuggestion(s);
       const queue = this.plugin.suggestionQueue;
       if (queue !== null) {
         await queue.remove(s.id);
       }
-      await this.plugin.activityLog?.record({
-        kind: 'suggestion.skipped',
-        suggestionId: s.id,
-        notePath: s.notePath,
-        bulk: false,
-      });
-      new Notice(
-        `Sagittarius: canonicalize \`#${s.canonical}\` across ${s.nonCanonicalNoteCount} note(s). ` +
-          `Variants: ${s.cluster.map((t) => `#${t}`).join(', ')}.`,
-        15_000,
-      );
+      if (outcome.applied > 0) {
+        await this.plugin.activityLog?.record({
+          kind: 'suggestion.applied',
+          suggestionId: s.id,
+          suggestionKind: 'route',
+          notePath: s.notePath,
+          writeToolName: 'patch_note',
+        });
+      } else {
+        await this.plugin.activityLog?.record({
+          kind: 'suggestion.skipped',
+          suggestionId: s.id,
+          notePath: s.notePath,
+          bulk: false,
+        });
+      }
+      const summary =
+        `Sagittarius: normalize-tag — applied ${outcome.applied}, ` +
+        `rejected ${outcome.rejected}, errors ${outcome.errored}` +
+        (outcome.conflict > 0 ? `, conflicts ${outcome.conflict}` : '') +
+        ` (${outcome.skipped} no-op of ${outcome.scanned} scanned).`;
+      new Notice(summary, 15_000);
       await this.refresh();
     }
   }
