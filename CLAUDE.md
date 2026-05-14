@@ -6,32 +6,33 @@ This file orients a Claude Code session opened against this repo. Substrate ques
 
 - **Name:** Sagittarius — Claude Conduit (`obsidian-claude-conduit`)
 - **What:** Native Obsidian plugin. Chat with your vault, retrieval-grounded.
-- **Status:** v1.1.0 — Phase 6.7 closes. The diff-card-focus problem (deferred by ADR-023 lesson 2) is fully solved per ADR-025 D2 (c) + D3 + D4. New `ExternalProposalQueue` holds pending MCP-driven proposals; `CallbackApprovalGate` routes by `WriteToolContext.currentSource()` so external proposals enqueue while in-app chat still uses the diff-card callback. `McpHandler` races `registry.execute` against `mcpWriteQueueTimeoutMs` (default 30 s); on timeout the MCP response returns `queued` while the underlying tool keeps running in the background — when the user eventually approves via the side panel, the transaction commits with `source: 'mcp:<client>'`. New `ExternalProposalsView` (right side panel) lists pending proposals with inline diff previews + Approve/Reject buttons; new always-visible status bar pill ("Sagittarius: N pending") hides when the queue is empty. Native OS `Notification` fires on each enqueue (opt-out via `mcpWriteNotifyOnQueue`). On plugin unload, `clearAll` rejects every pending entry so MCP clients see clean rejection instead of hung calls. OQ1 settled: side-panel Approve resolves directly (inline diff preview makes a re-opened modal redundant). 931 tests (+5). Phase 6.7 done; ADR-026 (Phase 8 — generative layer) MVP at v1.2.0 is next.
+- **Status:** v1.1.0 — Phase 6.7 closed (ADR-027). The MCP bridge now exposes 5 read tools always, 9 write tools when `mcpWriteEnabled`, plus `delete_note` behind a second toggle. The diff-card-focus problem (deferred by ADR-023 lesson 2 → solved + closed ~24 h later) is fully solved for the user-not-at-Obsidian case via `ExternalProposalQueue` + side panel + status bar pill + native OS `Notification`. McpHandler races `registry.execute` against `mcpWriteQueueTimeoutMs` (default 30 s); on timeout the MCP response returns `queued` while the underlying tool keeps running and commits when the user approves later. ADR-025 OQ1 settled: side-panel Approve resolves directly (inline diff preview makes a re-opened modal redundant). The in-app-chat-concurrent case returns "retry shortly" — accepted limitation per ADR-027 lesson 2. 931 tests. Phase 6.7 done; ADR-026 (Phase 8 — generative layer) MVP at v1.2.0 is next.
 - **Build pattern:** `pair-via-claude-code` per [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) (ADR-010). Thad decides; Claude implements.
 
 ## Read first (in this order)
 
-1. [`docs/2026-05-14-adr-025-phase-6.7-mcp-write-side-plan.md`](docs/2026-05-14-adr-025-phase-6.7-mcp-write-side-plan.md) — ADR-025, Phase 6.7 MCP write-side plan (10 decisions, all accepted; 1 OQ open).
-2. [`docs/2026-05-14-adr-026-phase-8-generative-layer-plan.md`](docs/2026-05-14-adr-026-phase-8-generative-layer-plan.md) — ADR-026, Phase 8 generative layer plan (10 decisions, all accepted; 3 OQs open).
-3. [`docs/2026-05-14-phase-7-close.md`](docs/2026-05-14-phase-7-close.md) — ADR-024, Phase 7 retrospective (two lessons; first v1.x release).
-4. [`docs/2026-05-14-phase-6.5-close.md`](docs/2026-05-14-phase-6.5-close.md) — ADR-023, Phase 6.5 retrospective (two lessons + write-side-deferred).
-5. [`docs/2026-05-13-adr-021-phase-6.5-mcp-bridge-plan.md`](docs/2026-05-13-adr-021-phase-6.5-mcp-bridge-plan.md) — ADR-021, Phase 6.5 plan (MCP bridge; 9 decisions, all accepted).
-6. [`docs/2026-05-13-adr-022-phase-7-curator-plan.md`](docs/2026-05-13-adr-022-phase-7-curator-plan.md) — ADR-022, Phase 7 plan (Curator; 10 decisions, all accepted).
-7. [`docs/2026-05-13-phase-6-close.md`](docs/2026-05-13-phase-6-close.md) — ADR-020, Phase 6 retrospective.
-8. [`docs/2026-05-12-adr-019-phase-6-plan.md`](docs/2026-05-12-adr-019-phase-6-plan.md) — ADR-019, Phase 6 plan (Activity Stream; MCP bridge split out, now ADR-021).
-9. [`docs/2026-05-12-phase-5-close.md`](docs/2026-05-12-phase-5-close.md) — ADR-018, Phase 5 retrospective.
-10. [`docs/2026-05-11-adr-017-phase-5-plan.md`](docs/2026-05-11-adr-017-phase-5-plan.md) — ADR-017, Phase 5 plan.
-11. [`docs/2026-05-10-adr-016-phase-4-plan.md`](docs/2026-05-10-adr-016-phase-4-plan.md) — ADR-016, Phase 4 plan (D1-D6 + prereqs).
-12. [`docs/2026-05-09-phase-3-close.md`](docs/2026-05-09-phase-3-close.md) — ADR-014, Phase 3 retrospective.
-13. [`docs/2026-05-10-adr-015-vault-adapter-audit.md`](docs/2026-05-10-adr-015-vault-adapter-audit.md) — ADR-015, VaultAdapter audit findings + Phase 4 prereqs.
-14. [`docs/02_SPEC.md`](docs/02_SPEC.md) — v0.1 spec (binding).
-15. [`docs/03_PACKAGE_JSON.md`](docs/03_PACKAGE_JSON.md) — dependency rationale.
-16. [`docs/04_MANIFEST_JSON.md`](docs/04_MANIFEST_JSON.md) — Obsidian manifest fields.
-17. [`docs/05_CONDUIT_AGENT_SKETCH.md`](docs/05_CONDUIT_AGENT_SKETCH.md) — agent class shape.
-18. [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) — ADR-010 (process).
-19. [`docs/embed_interface.md`](docs/embed_interface.md) — embedding contract v1 (shared with corpus-ingest).
-20. [`docs/THAD_MAN.md`](docs/THAD_MAN.md) — vault constitution; loaded into the agent's system prompt at runtime.
-21. [`docs/concierge.md`](docs/concierge.md) — Hangar voice; loaded into the agent's system prompt.
+1. [`docs/2026-05-14-phase-6.7-close.md`](docs/2026-05-14-phase-6.7-close.md) — ADR-027, Phase 6.7 retrospective (two lessons; diff-card-focus problem solved).
+2. [`docs/2026-05-14-adr-025-phase-6.7-mcp-write-side-plan.md`](docs/2026-05-14-adr-025-phase-6.7-mcp-write-side-plan.md) — ADR-025, Phase 6.7 MCP write-side plan (10 decisions, all accepted; OQ1 settled in implementation).
+3. [`docs/2026-05-14-adr-026-phase-8-generative-layer-plan.md`](docs/2026-05-14-adr-026-phase-8-generative-layer-plan.md) — ADR-026, Phase 8 generative layer plan (10 decisions, all accepted; 3 OQs open).
+4. [`docs/2026-05-14-phase-7-close.md`](docs/2026-05-14-phase-7-close.md) — ADR-024, Phase 7 retrospective (two lessons; first v1.x release).
+5. [`docs/2026-05-14-phase-6.5-close.md`](docs/2026-05-14-phase-6.5-close.md) — ADR-023, Phase 6.5 retrospective (two lessons + write-side-deferred).
+6. [`docs/2026-05-13-adr-021-phase-6.5-mcp-bridge-plan.md`](docs/2026-05-13-adr-021-phase-6.5-mcp-bridge-plan.md) — ADR-021, Phase 6.5 plan (MCP bridge; 9 decisions, all accepted).
+7. [`docs/2026-05-13-adr-022-phase-7-curator-plan.md`](docs/2026-05-13-adr-022-phase-7-curator-plan.md) — ADR-022, Phase 7 plan (Curator; 10 decisions, all accepted).
+8. [`docs/2026-05-13-phase-6-close.md`](docs/2026-05-13-phase-6-close.md) — ADR-020, Phase 6 retrospective.
+9. [`docs/2026-05-12-adr-019-phase-6-plan.md`](docs/2026-05-12-adr-019-phase-6-plan.md) — ADR-019, Phase 6 plan (Activity Stream; MCP bridge split out, now ADR-021).
+10. [`docs/2026-05-12-phase-5-close.md`](docs/2026-05-12-phase-5-close.md) — ADR-018, Phase 5 retrospective.
+11. [`docs/2026-05-11-adr-017-phase-5-plan.md`](docs/2026-05-11-adr-017-phase-5-plan.md) — ADR-017, Phase 5 plan.
+12. [`docs/2026-05-10-adr-016-phase-4-plan.md`](docs/2026-05-10-adr-016-phase-4-plan.md) — ADR-016, Phase 4 plan (D1-D6 + prereqs).
+13. [`docs/2026-05-09-phase-3-close.md`](docs/2026-05-09-phase-3-close.md) — ADR-014, Phase 3 retrospective.
+14. [`docs/2026-05-10-adr-015-vault-adapter-audit.md`](docs/2026-05-10-adr-015-vault-adapter-audit.md) — ADR-015, VaultAdapter audit findings + Phase 4 prereqs.
+15. [`docs/02_SPEC.md`](docs/02_SPEC.md) — v0.1 spec (binding).
+16. [`docs/03_PACKAGE_JSON.md`](docs/03_PACKAGE_JSON.md) — dependency rationale.
+17. [`docs/04_MANIFEST_JSON.md`](docs/04_MANIFEST_JSON.md) — Obsidian manifest fields.
+18. [`docs/05_CONDUIT_AGENT_SKETCH.md`](docs/05_CONDUIT_AGENT_SKETCH.md) — agent class shape.
+19. [`docs/2026-05-04-sagittarius-build-process.md`](docs/2026-05-04-sagittarius-build-process.md) — ADR-010 (process).
+20. [`docs/embed_interface.md`](docs/embed_interface.md) — embedding contract v1 (shared with corpus-ingest).
+21. [`docs/THAD_MAN.md`](docs/THAD_MAN.md) — vault constitution; loaded into the agent's system prompt at runtime.
+22. [`docs/concierge.md`](docs/concierge.md) — Hangar voice; loaded into the agent's system prompt.
 
 ## Decision authority hierarchy
 
