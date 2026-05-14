@@ -27,7 +27,8 @@ export type Suggestion =
   | BrokenLinkFixSuggestion
   | ArchiveStaleSuggestion
   | AddFrontmatterSuggestion
-  | StaleReviewSuggestion;
+  | StaleReviewSuggestion
+  | DuplicateCandidateSuggestion;
 
 export interface RouteSuggestion {
   kind: 'route';
@@ -136,6 +137,27 @@ export interface StaleReviewSuggestion {
   createdAt: number;
   notePath: string;
   staleDays: number;
+  reason: string;
+  confidence: number;
+  deferred?: boolean;
+}
+
+/**
+ * Phase 7 v1.0.2 — "these two notes look like duplicates." Pair
+ * encoded as `notePath` + `otherPath`. Apply is informational
+ * (open both notes; manual merge); ADR-022 D1 punts true merging
+ * to Phase 8.
+ */
+export interface DuplicateCandidateSuggestion {
+  kind: 'duplicate-candidate';
+  id: string;
+  createdAt: number;
+  /** First note of the pair (alphabetically smaller path). */
+  notePath: string;
+  /** Second note of the pair. */
+  otherPath: string;
+  /** Cosine similarity (0..1) from the embedding pre-filter. */
+  similarity: number;
   reason: string;
   confidence: number;
   deferred?: boolean;
