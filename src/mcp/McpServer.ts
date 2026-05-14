@@ -2,6 +2,7 @@ import type { ActivityLog } from '../activity/ActivityLog';
 import type { ToolRegistry } from '../agent/ToolRegistry';
 
 import { HttpListener, type HandlerResult, type HttpHandler } from './HttpListener';
+import { McpHandler } from './McpHandler';
 
 /**
  * Phase 6.5 (v0.9.0) — MCP server per
@@ -37,6 +38,8 @@ export interface McpServerDeps {
   allowedClients: string[];
   /** Shared tool registry — same instance the in-app agent uses. */
   toolRegistry: ToolRegistry;
+  /** Plugin version string — surfaced via MCP `initialize` `serverInfo.version`. */
+  pluginVersion: string;
   /** Optional — events emitted with `source: 'mcp:<client>'` per ADR-021 D5. */
   activityLog?: ActivityLog;
   /** Test-injectable logger. */
@@ -49,6 +52,7 @@ export class McpServer {
   private readonly deps: McpServerDeps;
   private readonly logger: { warn: (msg: string) => void; info?: (msg: string) => void };
   private readonly listener: HttpListener;
+  private readonly mcpHandler: McpHandler;
   private started = false;
 
   constructor(deps: McpServerDeps) {
@@ -57,6 +61,11 @@ export class McpServer {
       warn: (msg) => console.warn(`[mcp-server] ${msg}`),
       info: (msg) => console.warn(`[mcp-server] ${msg}`),
     };
+    this.mcpHandler = new McpHandler({
+      toolRegistry: deps.toolRegistry,
+      pluginVersion: deps.pluginVersion,
+      logger: this.logger,
+    });
     this.listener =
       deps.listener ??
       new HttpListener({
@@ -109,21 +118,20 @@ export class McpServer {
   }
 
   /**
-   * PR 2 stub handler. Echoes the request body, attaches server
-   * metadata. PR 3 replaces this with the MCP SDK's JSON-RPC dispatch.
+   * Bridge between the auth-gated `HttpListener` and the JSON-RPC
+   * `McpHandler`. Authenticated POST → parse body (HttpListener did
+   * that) → dispatch via the MCP handler → JSON-RPC response in body.
+   * All errors are turned into JSON-RPC errors inside the handler;
+   * the HTTP status is always 200 (per JSON-RPC convention where the
+   * transport is healthy but the payload may carry an error).
    */
   private makeHandler(): HttpHandler {
-    return (_req, body): Promise<HandlerResult> => {
-      return Promise.resolve({
+    return async (_req, body): Promise<HandlerResult> => {
+      const jsonRpcResponse = await this.mcpHandler.handle(body);
+      return {
         status: 200,
-        body: {
-          ok: true,
-          server: 'sagittarius',
-          stage: 'pr-2-scaffold',
-          allowedClients: this.deps.allowedClients,
-          echo: body,
-        },
-      });
+        body: jsonRpcResponse,
+      };
     };
   }
 }

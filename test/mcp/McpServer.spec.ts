@@ -16,11 +16,12 @@ async function makeServer(
     port: over.port ?? 0, // ephemeral; HttpListener picks
     allowedClients: over.allowedClients ?? [],
     toolRegistry: new ToolRegistry(),
+    pluginVersion: '0.9.0-test',
     logger: { warn: () => {}, info: () => {} },
   });
 }
 
-describe('McpServer (v0.9.0 PR 2 — HTTP listener wired)', () => {
+describe('McpServer (v0.9.0 PR 3 — MCP handler wired)', () => {
   it('binds and reports running', async () => {
     const server = await makeServer();
     expect(server.isRunning()).toBe(false);
@@ -60,7 +61,7 @@ describe('McpServer (v0.9.0 PR 2 — HTTP listener wired)', () => {
     expect(server.isRunning()).toBe(false);
   });
 
-  it('responds to authenticated POST with the PR 2 echo handler', async () => {
+  it('responds to authenticated MCP initialize with serverInfo', async () => {
     const server = await makeServer();
     await server.start();
     const port = server.boundPort();
@@ -70,15 +71,13 @@ describe('McpServer (v0.9.0 PR 2 — HTTP listener wired)', () => {
         Authorization: `Bearer ${SAMPLE_TOKEN}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ ping: 'pong' }),
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize' }),
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as Record<string, unknown>;
-    expect(body).toMatchObject({
-      ok: true,
-      server: 'sagittarius',
-      stage: 'pr-2-scaffold',
-      echo: { ping: 'pong' },
+    const body = (await res.json()) as { result?: Record<string, unknown> };
+    expect(body.result).toMatchObject({
+      protocolVersion: '2024-11-05',
+      serverInfo: { name: 'sagittarius', version: '0.9.0-test' },
     });
     await server.stop();
   });
@@ -107,6 +106,7 @@ describe('McpServer (v0.9.0 PR 2 — HTTP listener wired)', () => {
       port: 0,
       allowedClients: [],
       toolRegistry: new ToolRegistry(),
+      pluginVersion: '0.9.0-test',
       listener: injected,
       logger: { warn: () => {}, info: () => {} },
     });
