@@ -2,6 +2,7 @@ import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
 import { ItemView, MarkdownRenderer, Notice, type WorkspaceLeaf } from 'obsidian';
 
 import type { TurnResult } from '../agent/ConduitAgent';
+import { formatMemoryFooter } from '../memory/MemoryCascade';
 import type SagittariusPlugin from '../main';
 import type { Decision, Proposal, ProposalDiff } from '../writes/types';
 
@@ -276,6 +277,16 @@ export class ChatView extends ItemView {
       `Tokens in/out: ${result.tokensIn} / ${result.tokensOut} · ` +
         `Steps: ${result.steps} · Cost: $${result.costUsd.toFixed(4)} · ${result.durationMs} ms`,
     );
+
+    // Phase 9 (v1.3.0) — chat-response memory footer per ADR-029 D7.
+    // Reads from the provider's `lastResult` populated during the
+    // just-finished turn. Silent when memory is disabled (the
+    // status-bar pill already signals "memory: off").
+    const memoryResult = this.plugin.memoryProvider?.lastResult ?? null;
+    if (memoryResult !== null) {
+      const memoryMeta = bubble.createDiv({ cls: 'sagittarius-meta sagittarius-meta-memory' });
+      memoryMeta.setText(formatMemoryFooter(memoryResult));
+    }
 
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
   }
