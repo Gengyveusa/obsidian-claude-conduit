@@ -28,6 +28,14 @@ interface BaseActivityEvent {
   /** Unix milliseconds; populated by `ActivityLog.record` at insert time. */
   timestamp: number;
   kind: ActivityEventKind;
+  /**
+   * v0.9.0 (ADR-021 D5) — who triggered this event. Default
+   * `'sagittarius'` (in-app chat, organization engine, curator).
+   * Set to `'mcp:<client>'` when the event was caused by an MCP
+   * request from an external client (Claude Desktop, etc.). Optional
+   * so old events without the field still parse.
+   */
+  source?: string;
 }
 
 export interface IndexBuiltEvent extends BaseActivityEvent {

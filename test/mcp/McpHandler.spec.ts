@@ -145,6 +145,74 @@ describe('McpHandler', () => {
     expect('error' in res && res.error.code).toBe(JSON_RPC_ERROR.METHOD_NOT_FOUND);
   });
 
+  it('records activity events with source: mcp:<client> after initialize', async () => {
+    const records: Array<Record<string, unknown>> = [];
+    const fakeLog = {
+      record: (input: Record<string, unknown>): Promise<Record<string, unknown>> => {
+        records.push(input);
+        return Promise.resolve({ ...input, id: 'x', timestamp: 1 });
+      },
+      list: () => Promise.resolve([]),
+      size: () => Promise.resolve(0),
+      clear: () => Promise.resolve(),
+      clearMatching: () => Promise.resolve(0),
+    };
+    const h = new McpHandler({
+      toolRegistry: makeRegistry([fakeReadNote()]),
+      pluginVersion: '0.9.0-test',
+      activityLog: fakeLog as never,
+      logger: { warn: () => {} },
+    });
+    // 1) initialize with clientInfo.name → handler captures `mcp:claude-desktop`.
+    await h.handle({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: { clientInfo: { name: 'claude-desktop', version: '0.1' } },
+    });
+    // 2) tools/call → activity event recorded with the captured source.
+    await h.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'read_note', arguments: { path: 'a.md' } },
+    });
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      kind: 'write.committed',
+      source: 'mcp:claude-desktop',
+      toolName: 'read_note',
+      path: 'a.md',
+    });
+  });
+
+  it('falls back to `source: mcp` when initialize has no clientInfo', async () => {
+    const records: Array<Record<string, unknown>> = [];
+    const fakeLog = {
+      record: (input: Record<string, unknown>): Promise<Record<string, unknown>> => {
+        records.push(input);
+        return Promise.resolve({ ...input, id: 'x', timestamp: 1 });
+      },
+      list: () => Promise.resolve([]),
+      size: () => Promise.resolve(0),
+      clear: () => Promise.resolve(),
+      clearMatching: () => Promise.resolve(0),
+    };
+    const h = new McpHandler({
+      toolRegistry: makeRegistry([fakeReadNote()]),
+      pluginVersion: '0.9.0-test',
+      activityLog: fakeLog as never,
+      logger: { warn: () => {} },
+    });
+    await h.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: { name: 'read_note', arguments: { path: 'a.md' } },
+    });
+    expect(records[0].source).toBe('mcp');
+  });
+
   it('preserves the request id on responses', async () => {
     const h = makeHandler(makeRegistry([]));
     const res = await h.handle({ jsonrpc: '2.0', id: 'abc-123', method: 'initialize' });
