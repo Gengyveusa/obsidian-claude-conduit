@@ -4,6 +4,15 @@ Versioning is semver-ish: minor bumps signal new user-facing capability,
 patch bumps are polish + bug fixes within a phase. Each phase has a plan
 ADR (numbered) and a close ADR (retrospective) — see `docs/`.
 
+## [1.3.4] — 2026-05-15 (Citation drift verification at promotion)
+
+- **Pre-promotion citation drift check.** Before `Sagittarius: Promote draft` fires the `move_note`, every `cited_chunks` entry is verified against the current retrieval index.
+- Two classes of drift: **missing chunks** (note exists but chunk index gone — usually rechunked) and **missing notes** (source note deleted/moved/never indexed).
+- On drift: a confirmation modal lists every drifted citation; operator can "Promote anyway" (citations are documentation, not contracts) or cancel.
+- Drift-check failure (e.g., engine unavailable) logs a warning and proceeds — never blocks promotion.
+- New `src/drafts/citationDrift.ts`: pure `verifyCitations(opts)` + `formatDriftSummary(report)`.
+- Tests: +11 (1050 total).
+
 ## [1.3.3] — 2026-05-15 (Drafting engine reads CLAUDE.md cascade)
 
 - **`AnthropicDraftingEngine` reads memory.** New optional `memoryProvider` dep; when set, the cascade text appears as a `# Operator memory` block between persona and output-format in the drafting system prompt.
