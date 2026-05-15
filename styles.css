@@ -503,3 +503,96 @@
   font-size: 0.9em;
   word-break: break-all;
 }
+
+/* Phase 8 — drafts side panel + new-draft modal (ADR-026) */
+.sagittarius-drafts {
+  padding: 0.6em 0.8em;
+  font-size: 0.9em;
+}
+
+.sagittarius-drafts-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5em;
+  margin-bottom: 0.2em;
+}
+
+.sagittarius-drafts-header h3 {
+  margin: 0;
+  font-size: 1.1em;
+}
+
+.sagittarius-drafts-count {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  background: var(--background-modifier-border);
+  padding: 0 0.5em;
+  border-radius: 999px;
+}
+
+.sagittarius-drafts-empty {
+  margin-top: 1em;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.sagittarius-drafts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  margin-top: 0.5em;
+}
+
+.sagittarius-drafts-row {
+  padding: 0.5em 0.7em;
+  border-left: 3px solid var(--background-modifier-border);
+  background: var(--background-primary-alt);
+  border-radius: 3px;
+}
+
+.sagittarius-drafts-title {
+  font-weight: 600;
+  margin-bottom: 0.15em;
+}
+
+.sagittarius-drafts-meta {
+  font-size: 0.75em;
+  color: var(--text-muted);
+  margin-bottom: 0.4em;
+  word-break: break-all;
+}
+
+.sagittarius-drafts-actions {
+  display: flex;
+  gap: 0.4em;
+}
+
+.sagittarius-drafts-actions button {
+  font-size: 0.85em;
+  padding: 0.2em 0.6em;
+}
+
+.sagittarius-new-draft-modal h3 {
+  margin-top: 0;
+}
+
+.sagittarius-new-draft-topic,
+.sagittarius-new-draft-folder {
+  font-family: var(--font-text);
+  font-size: 0.95em;
+}
+
+/* Phase 9 — memory footer line in chat responses (ADR-029 D7) */
+.sagittarius-meta-memory {
+  margin-top: 0.15em;
+  font-style: italic;
+}
+
+/* Status bar pills shared across phases */
+.sagittarius-status-bar {
+  cursor: pointer;
+}
+
+.sagittarius-status-bar:hover {
+  color: var(--text-accent);
+}
