@@ -92,6 +92,7 @@ import {
   type DuplicateMergeChoice,
 } from './views/DuplicateMergeModal';
 import { UndoConfirmModal } from './views/UndoConfirmModal';
+import { verifyCitations, type CitationDriftReport } from './drafts/citationDrift';
 import { AnthropicDraftingEngine, draftToFileContent } from './drafts/DraftingEngine';
 import { DraftStore } from './drafts/DraftStore';
 import { promotedPathFor } from './drafts/paths';
@@ -751,6 +752,34 @@ export default class SagittariusPlugin extends Plugin {
       new Notice(`Sagittarius: ${msg}`);
       return;
     }
+
+    // Phase 9 (v1.3.4) — citation drift verification per the v1.2.x
+    // OQ1 follow-up. When the engine is loaded, re-verify each
+    // `cited_chunks` entry against the current index. On drift,
+    // surface a confirmation modal — operator can promote anyway
+    // (citations are documentation, not contracts) or cancel.
+    if (this.engine !== undefined) {
+      try {
+        const adapter = new VaultAdapterImpl(this.app);
+        const report = await verifyCitations({
+          adapter,
+          draftPath,
+          selfEngine: this.engine,
+        });
+        if (report.hasDrift) {
+          const proceed = await this.confirmCitationDrift(draftPath, report);
+          if (!proceed) {
+            new Notice('Sagittarius: promotion cancelled.');
+            return;
+          }
+        }
+      } catch (err) {
+        // Drift check failure shouldn't block promotion — log and proceed.
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[sagittarius] citation drift verification failed: ${msg}`);
+      }
+    }
+
     await this.activateChatView();
     try {
       await bundle.deps.tools.execute('move_note', {
@@ -762,6 +791,76 @@ export default class SagittariusPlugin extends Plugin {
       const msg = err instanceof Error ? err.message : String(err);
       new Notice(`Sagittarius: promotion failed — ${msg}`);
     }
+  }
+
+  /**
+   * Phase 9 (v1.3.4) — confirmation modal shown before promoting a
+   * draft when `verifyCitations` reports drift. Resolves `true` if
+   * the operator chooses to promote anyway, `false` on cancel.
+   */
+  private async confirmCitationDrift(
+    draftPath: string,
+    report: CitationDriftReport,
+  ): Promise<boolean> {
+    const { Modal } = await import('obsidian');
+    const { formatDriftSummary } = await import('./drafts/citationDrift');
+    return new Promise<boolean>((resolve) => {
+      const modal = new Modal(this.app);
+      modal.titleEl.setText('Sagittarius — citation drift detected');
+      const { contentEl } = modal;
+      contentEl.empty();
+      contentEl.createEl('p', {
+        text: `Promoting \`${draftPath}\`. ${formatDriftSummary(report)}.`,
+      });
+      if (report.missingChunks.length > 0) {
+        contentEl.createEl('h4', { text: 'Missing chunk indices (note rechunked since draft)' });
+        const ul = contentEl.createEl('ul');
+        for (const c of report.missingChunks) {
+          ul.createEl('li', { text: `${c.notePath} — chunk ${c.chunkIndex}` });
+        }
+      }
+      if (report.missingNotes.length > 0) {
+        contentEl.createEl('h4', { text: 'Missing notes (deleted, moved, or never existed)' });
+        const ul = contentEl.createEl('ul');
+        for (const c of report.missingNotes) {
+          ul.createEl('li', { text: `${c.notePath} — chunk ${c.chunkIndex}` });
+        }
+      }
+      contentEl.createEl('p', {
+        cls: 'setting-item-description',
+        text:
+          'Citations are documentation, not contracts — you can promote anyway. ' +
+          'But the draft\'s `[[]]` markers may now point to stale or moved content.',
+      });
+      const buttons = contentEl.createDiv({ cls: 'sagittarius-drift-buttons' });
+      buttons.style.display = 'flex';
+      buttons.style.gap = '8px';
+      buttons.style.justifyContent = 'flex-end';
+      buttons.style.marginTop = '12px';
+      const cancelBtn = buttons.createEl('button', { text: 'Cancel' });
+      const proceedBtn = buttons.createEl('button', {
+        text: 'Promote anyway',
+        cls: 'mod-warning',
+      });
+      let resolved = false;
+      const finalize = (val: boolean): void => {
+        if (resolved) {
+          return;
+        }
+        resolved = true;
+        resolve(val);
+        modal.close();
+      };
+      cancelBtn.addEventListener('click', () => finalize(false));
+      proceedBtn.addEventListener('click', () => finalize(true));
+      modal.onClose = (): void => {
+        if (!resolved) {
+          resolved = true;
+          resolve(false);
+        }
+      };
+      modal.open();
+    });
   }
 
   private async testMcpConnection(): Promise<void> {
