@@ -92,6 +92,11 @@ import {
   type DuplicateMergeChoice,
 } from './views/DuplicateMergeModal';
 import { UndoConfirmModal } from './views/UndoConfirmModal';
+import {
+  makeDraftSuggestionRule,
+  type DraftSuggestionPayload,
+} from './curator/rules/DraftSuggestionRule';
+import type { CuratorFinding } from './curator/types';
 import { verifyCitations, type CitationDriftReport } from './drafts/citationDrift';
 import { AnthropicDraftingEngine, draftToFileContent } from './drafts/DraftingEngine';
 import { DraftStore } from './drafts/DraftStore';
@@ -506,6 +511,13 @@ export default class SagittariusPlugin extends Plugin {
         void this.activateDraftsView();
       },
     });
+    this.addCommand({
+      id: 'suggest-drafts',
+      name: 'Suggest drafts',
+      callback: () => {
+        void this.runSuggestDrafts();
+      },
+    });
 
     try {
       await this.initializeIndexing();
@@ -662,7 +674,7 @@ export default class SagittariusPlugin extends Plugin {
    * No new ADR-016 variant — the draft is just a `create_note` whose
    * path starts with `_drafts/` (D9 (a)).
    */
-  private async runNewDraft(): Promise<void> {
+  private async runNewDraft(initialTopic = ''): Promise<void> {
     const bundle = await this.getAgentBundle();
     if (bundle === null) {
       new Notice('Sagittarius: set your Anthropic API key in Settings → Sagittarius first.');
@@ -676,7 +688,11 @@ export default class SagittariusPlugin extends Plugin {
     }
     const retrieval = bundle.deps.retrieval;
 
-    const modal = new NewDraftModal(this.app, this.settings.draftsDefaultDestination);
+    const modal = new NewDraftModal(
+      this.app,
+      this.settings.draftsDefaultDestination,
+      initialTopic,
+    );
     const inputs = await modal.prompt();
     if (inputs === null) {
       return;
@@ -738,6 +754,85 @@ export default class SagittariusPlugin extends Plugin {
    * `move_note` so the user sees a path-rename diff card (ADR-016 D2
    * invariant) and Obsidian's metadata cache auto-rewrites wikilinks.
    */
+  /**
+   * Phase 9.x (v1.4.0) — `Sagittarius: Suggest drafts` command.
+   * Runs the pure `DraftSuggestionRule` over the vault corpus and
+   * surfaces a modal listing every cluster of N+ tagged notes
+   * lacking a synthesis. Each row gets a "Draft this" button that
+   * opens `NewDraftModal` pre-filled with the suggested topic.
+   *
+   * Standalone (not yet wired into the curator orchestrator) per
+   * the v1.4.0 scope decision — full curator-orchestrator
+   * integration deferred to v1.4.x once the suggestion shape
+   * stabilizes from real use.
+   */
+  private async runSuggestDrafts(): Promise<void> {
+    const adapter = new VaultAdapterImpl(this.app);
+    const cache = new MetadataCacheImpl(this.app);
+    const corpus = new VaultCorpus(adapter, cache);
+    const rule = makeDraftSuggestionRule({
+      minNotes: this.settings.draftSuggestionMinNotes,
+    });
+    const notice = new Notice('Sagittarius: scanning vault for draft candidates…', 0);
+    let findings: CuratorFinding[];
+    try {
+      findings = await rule.detect(corpus);
+    } catch (err) {
+      notice.hide();
+      const msg = err instanceof Error ? err.message : String(err);
+      new Notice(`Sagittarius: draft suggestion failed — ${msg}`);
+      return;
+    }
+    notice.hide();
+
+    const { Modal } = await import('obsidian');
+    const modal = new Modal(this.app);
+    modal.titleEl.setText('Sagittarius — draft suggestions');
+    const { contentEl } = modal;
+    contentEl.empty();
+
+    if (findings.length === 0) {
+      contentEl.createEl('p', {
+        text:
+          `No draft candidates. Either every tag with ${this.settings.draftSuggestionMinNotes}+ notes ` +
+          'already has a synthesis, or no tag clusters meet the threshold. ' +
+          'Lower the threshold in Settings → Sagittarius → Generative drafting if you want broader suggestions.',
+      });
+    } else {
+      contentEl.createEl('p', {
+        cls: 'setting-item-description',
+        text:
+          `${findings.length} candidate${findings.length === 1 ? '' : 's'} ` +
+          `(tag clusters with ≥${this.settings.draftSuggestionMinNotes} notes lacking a synthesis). ` +
+          'Click "Draft this" to open the New Draft modal pre-filled with the suggested topic.',
+      });
+      // Sort severity desc — highest-priority first.
+      const sorted = [...findings].sort((a, b) => b.severity - a.severity);
+      for (const finding of sorted) {
+        const payload = finding.payload as unknown as DraftSuggestionPayload;
+        const row = contentEl.createDiv({ cls: 'sagittarius-draft-suggestion-row' });
+        row.style.padding = '0.5em 0';
+        row.style.borderTop = '1px solid var(--background-modifier-border)';
+        const title = row.createDiv({ cls: 'sagittarius-draft-suggestion-title' });
+        title.setText(`#${payload.tag} (${payload.memberCount} notes)`);
+        title.style.fontWeight = '600';
+        const reason = row.createDiv({ cls: 'sagittarius-draft-suggestion-reason' });
+        reason.setText(finding.reason);
+        reason.style.fontSize = '0.85em';
+        reason.style.color = 'var(--text-muted)';
+        const actions = row.createDiv();
+        actions.style.marginTop = '0.4em';
+        const btn = actions.createEl('button', { text: 'Draft this', cls: 'mod-cta' });
+        btn.addEventListener('click', () => {
+          modal.close();
+          void this.runNewDraft(payload.suggestedTopic);
+        });
+      }
+    }
+
+    modal.open();
+  }
+
   private async runPromoteDraft(draftPath: string): Promise<void> {
     const bundle = await this.getAgentBundle();
     if (bundle === null) {

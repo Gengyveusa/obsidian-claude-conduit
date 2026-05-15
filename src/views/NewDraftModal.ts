@@ -22,10 +22,17 @@ export class NewDraftModal extends Modal {
   private resolve: ((value: NewDraftModalInputs | null) => void) | null = null;
   private submitted = false;
   private readonly defaultDestination: string;
+  /**
+   * Phase 9.x (v1.4.0) — pre-fill the topic input. Used by
+   * `Sagittarius: Suggest drafts` so clicking a suggestion opens
+   * the modal with the suggested topic already typed.
+   */
+  private readonly initialTopic: string;
 
-  constructor(app: App, defaultDestination: string) {
+  constructor(app: App, defaultDestination: string, initialTopic = '') {
     super(app);
     this.defaultDestination = defaultDestination;
+    this.initialTopic = initialTopic;
   }
 
   /** Open the modal and return a promise that resolves on submit/cancel. */
@@ -59,7 +66,15 @@ export class NewDraftModal extends Modal {
     });
     topicInput.rows = 3;
     topicInput.style.width = '100%';
+    if (this.initialTopic.length > 0) {
+      topicInput.value = this.initialTopic;
+    }
     topicInput.focus();
+    // Place cursor at the end of any pre-filled text so operator
+    // can immediately edit instead of overwriting.
+    if (this.initialTopic.length > 0) {
+      topicInput.setSelectionRange(this.initialTopic.length, this.initialTopic.length);
+    }
 
     const folderLabel = contentEl.createEl('label', {
       text: `Destination folder (default ${this.defaultDestination || 'vault root'})`,

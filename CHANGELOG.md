@@ -4,6 +4,18 @@ Versioning is semver-ish: minor bumps signal new user-facing capability,
 patch bumps are polish + bug fixes within a phase. Each phase has a plan
 ADR (numbered) and a close ADR (retrospective) — see `docs/`.
 
+## [1.4.0] — 2026-05-15 (Proactive draft suggestions — ADR-026 D8(b))
+
+- **`Sagittarius: Suggest drafts`** — new command. Scans the vault for tags shared by N+ notes that lack a synthesis; surfaces a modal with one row per candidate and a "Draft this" button.
+- New `src/curator/rules/DraftSuggestionRule.ts` — pure rule per ADR-024 lesson 2. `buildTagCensus(corpus)` collects tag membership + flags synthesis notes; `makeDraftSuggestionRule({ minNotes, ignoreTags })` filters to clusters lacking synthesis.
+- "Synthesis" detection: `type: synthesis` frontmatter OR filename containing "synthesis"/"summary"/"overview".
+- Default ignore-tags: `inbox`, `draft`, `wip`, `synthesis`, `moc`, `index`, `archive` (structural tags shouldn't trigger suggestions).
+- `NewDraftModal` gained an optional pre-fill (`initialTopic`) for "Draft this" → modal opens with topic already typed.
+- Severity scales with cluster size (5 → 0.5; 20+ → 1.0 capped).
+- New setting: `draftSuggestionMinNotes` (default 5).
+- Standalone command (not yet wired into curator orchestrator); full integration deferred to v1.4.x once the suggestion shape stabilizes.
+- Tests: +13 (1063 total).
+
 ## [1.3.4] — 2026-05-15 (Citation drift verification at promotion)
 
 - **Pre-promotion citation drift check.** Before `Sagittarius: Promote draft` fires the `move_note`, every `cited_chunks` entry is verified against the current retrieval index.

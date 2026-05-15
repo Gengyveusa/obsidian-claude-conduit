@@ -245,6 +245,16 @@ export interface SagittariusSettings {
    */
   memoryMaxBytes: number;
 
+  // Phase 9.x (v1.4.0) — proactive draft suggestions per ADR-026 D8(b)
+  /**
+   * Minimum tag-cluster size before `Sagittarius: Suggest drafts`
+   * proposes a synthesis. Lower = more candidates surfaced; higher
+   * = only big clusters trigger. Default 5 — small enough to catch
+   * meaningful clusters in modest vaults, big enough to skip
+   * incidental tag use.
+   */
+  draftSuggestionMinNotes: number;
+
   // Phase 7 curator (per ADR-022 D2, D6)
   /**
    * Master switch for the curator. When off, `Sagittarius: Run curator`
@@ -339,6 +349,8 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
 
   memoryEnabled: true,
   memoryMaxBytes: 50_000,
+
+  draftSuggestionMinNotes: 5,
 
   curatorEnabled: false,
   curatorMaxPerSweep: 20,
