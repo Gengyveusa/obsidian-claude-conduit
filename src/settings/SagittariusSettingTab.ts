@@ -398,6 +398,25 @@ export class SagittariusSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }),
       );
+
+    new Setting(parent)
+      .setName('Draft suggestion threshold')
+      .setDesc(
+        'Minimum tag-cluster size before `Sagittarius: Suggest drafts` proposes a synthesis. ' +
+          'Lower = more candidates surfaced; higher = only big clusters trigger. Default 5.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('5')
+          .setValue(String(this.plugin.settings.draftSuggestionMinNotes))
+          .onChange(async (value) => {
+            const parsed = parseInt(value, 10);
+            if (Number.isFinite(parsed) && parsed > 0) {
+              this.plugin.settings.draftSuggestionMinNotes = parsed;
+              await this.plugin.saveSettings();
+            }
+          }),
+      );
   }
 
   private renderCuratorSection(parent: HTMLElement): void {
