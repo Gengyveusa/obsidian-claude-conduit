@@ -4,6 +4,14 @@ Versioning is semver-ish: minor bumps signal new user-facing capability,
 patch bumps are polish + bug fixes within a phase. Each phase has a plan
 ADR (numbered) and a close ADR (retrospective) — see `docs/`.
 
+## [1.3.2] — 2026-05-15 (ChatView Draft mode — ADR-026 D5(d)+D6(c))
+
+- **ChatView Draft mode.** When the active file is under `_drafts/`, ChatView shows a "Refining draft: …" banner and the agent's system prompt scopes edits to that file via `patch_note`.
+- Banner refreshes on `active-leaf-change`; opening a non-draft file exits draft mode.
+- `ConduitAgent.chat()` gains an optional `draftPath` 5th positional param; when set, a "Mode: DRAFT REFINE" block is appended to the system prompt with explicit `patch_note` guidance.
+- Zero new tools; existing `patch_note` does the work.
+- Tests: +4 (1031 total).
+
 ## [1.3.1] — 2026-05-15 (Phase 10 polish)
 
 - README full rewrite — covers all 8 shipped phases (was stale at v0.2.5)

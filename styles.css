@@ -596,3 +596,25 @@
 .sagittarius-status-bar:hover {
   color: var(--text-accent);
 }
+
+/* Phase 8 (v1.3.2) — ChatView draft refine banner per ADR-026 D5(d) */
+.sagittarius-draft-banner {
+  margin: 0.4em 0.8em 0;
+  padding: 0.4em 0.6em;
+  background: var(--background-modifier-success-rgb, var(--background-secondary));
+  border-left: 3px solid var(--text-accent);
+  border-radius: 3px;
+  font-size: 0.85em;
+}
+
+.sagittarius-draft-banner code {
+  font-family: var(--font-monospace);
+  background: var(--background-primary-alt);
+  padding: 0.05em 0.3em;
+  border-radius: 2px;
+}
+
+.sagittarius-draft-banner-hint {
+  color: var(--text-muted);
+  font-style: italic;
+}

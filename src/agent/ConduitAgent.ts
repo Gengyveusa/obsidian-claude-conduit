@@ -128,13 +128,26 @@ export class ConduitAgent {
 
   /**
    * Run one chat turn. Returns the final assistant text plus accounting.
+   *
+   * Phase 8 (v1.3.2) — when `draftPath` is non-null, the agent enters
+   * "draft refine" mode per ADR-026 D5(d)+D6(c): the system prompt
+   * tells it the user is iterating on the draft at that path, and
+   * encourages tool calls to scope edits there via `patch_note`
+   * (`patch_note` already exists; the scoping is prompt-level, not
+   * mechanical). The draft path is not validated here — caller
+   * (ChatView) is responsible for passing only valid `_drafts/`-
+   * prefixed paths.
+   *
    * @example const { finalText } = await agent.chat('hi', [], 'chat');
+   * @example
+   *   await agent.chat('tighten the intro', history, 'chat', null, '_drafts/30-Projects/q3.md');
    */
   async chat(
     userMessage: string,
     history: MessageParam[],
     mode: 'chat' | 'vault-qa',
     onToken?: (text: string) => void,
+    draftPath?: string | null,
   ): Promise<TurnResult> {
     const startedAt = Date.now();
 
@@ -166,7 +179,7 @@ export class ConduitAgent {
       }
 
       // 2. Build the system prompt with cache breakpoints.
-      const system = this.buildSystemPrompt(retrieved, mode, memory);
+      const system = this.buildSystemPrompt(retrieved, mode, memory, draftPath ?? null);
 
       // 3. Compose the message stack.
       const messages: MessageParam[] = [
@@ -378,6 +391,7 @@ export class ConduitAgent {
     retrieved: ConversationCitation[],
     mode: 'chat' | 'vault-qa',
     memory: string | null,
+    draftPath: string | null,
   ): TextBlockParam[] {
     const modeAddendum =
       mode === 'vault-qa'
@@ -404,6 +418,23 @@ export class ConduitAgent {
       { type: 'text', text: toolsHelp, cache_control: { type: 'ephemeral' } },
       { type: 'text', text: modeAddendum },
     );
+
+    // Phase 8 (v1.3.2) — draft refine mode per ADR-026 D5(d)+D6(c).
+    // Per-turn block (no cache_control) so swapping drafts doesn't
+    // invalidate the larger cached prefix.
+    if (draftPath !== null && draftPath.length > 0) {
+      blocks.push({
+        type: 'text',
+        text:
+          `Mode: DRAFT REFINE. The user is iterating on the draft at \`${draftPath}\`. ` +
+          `Scope your edits to that file: use \`patch_note(path='${draftPath}', ...)\` ` +
+          `for line-level changes, or \`patch_note\` with a single op spanning the whole ` +
+          `body for a wholesale rewrite. Do NOT propose writes to other paths unless ` +
+          `the user explicitly asks. Preserve the draft's frontmatter (topic, ` +
+          `cited_chunks, etc.) and citation style — drafts live under \`_drafts/\` ` +
+          `quarantine until promotion.`,
+      });
+    }
 
     if (retrieved.length > 0) {
       const retrievedBlock =
