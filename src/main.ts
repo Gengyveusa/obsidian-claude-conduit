@@ -773,10 +773,16 @@ export default class SagittariusPlugin extends Plugin {
     // listener is up + auth is gating); a dead one returns a network
     // error (ECONNREFUSED).
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/`, {
+      // Use Obsidian's `requestUrl` over raw `fetch` per community-plugin
+      // reviewer guidelines, even though this is localhost (no CORS
+      // concerns). `throw: false` so a 401 doesn't reject — we WANT
+      // the 401 here as proof the listener + auth gate are alive.
+      const res = await requestUrl({
+        url: `http://127.0.0.1:${port}/`,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
+        throw: false,
       });
       if (res.status === 401) {
         new Notice(
