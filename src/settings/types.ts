@@ -290,6 +290,32 @@ export interface SagittariusSettings {
    */
   memoryMaxBytes: number;
 
+  // Phase 12 (v1.5.0) — reverse-memory journal per ADR-033
+  /**
+   * Master switch for `Sagittarius: Journal this session` per ADR-033
+   * D7. Opt-in (default false) since the feature lets the agent
+   * write durable notes about the operator into the vault. When off,
+   * the journal command no-ops with an enable-me Notice + the
+   * cascade skips the journal section regardless of
+   * `journalCascadeDays`.
+   */
+  journalEnabled: boolean;
+  /**
+   * How many recent journal files to inject above the CLAUDE.md
+   * cascade per ADR-033 D5. Default 3 days × ~400 tokens/day ≈ 1200
+   * tokens in the system prompt. 0 disables journal cascade injection
+   * without disabling the journaling command (useful while
+   * experimenting).
+   */
+  journalCascadeDays: number;
+  /**
+   * Model used by `AnthropicJournalGenerator` per ADR-033 D4. Sonnet
+   * default — journaling is bounded-token summarization, not the
+   * quality-bias work drafting is. Operators who want richer entries
+   * can upgrade to Opus per-setting.
+   */
+  journalModel: 'claude-sonnet-4-6' | 'claude-opus-4-7' | 'claude-haiku-4-5-20251001';
+
   // Phase 9.x (v1.4.0) — proactive draft suggestions per ADR-026 D8(b)
   /**
    * Minimum tag-cluster size before `Sagittarius: Suggest drafts`
@@ -395,6 +421,10 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
 
   memoryEnabled: true,
   memoryMaxBytes: 50_000,
+
+  journalEnabled: false,
+  journalCascadeDays: 3,
+  journalModel: 'claude-sonnet-4-6',
 
   draftSuggestionMinNotes: 5,
 

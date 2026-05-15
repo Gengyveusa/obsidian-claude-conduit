@@ -4,6 +4,18 @@ Versioning is semver-ish: minor bumps signal new user-facing capability,
 patch bumps are polish + bug fixes within a phase. Each phase has a plan
 ADR (numbered) and a close ADR (retrospective) — see `docs/`.
 
+## [1.5.0] — 2026-05-15 (Phase 12 MVP — Reverse-memory journal — ADR-033)
+
+- **`Sagittarius: Journal this session`** — new command. Agent reads recent ChatView history, summarizes into a four-bullet H2 entry (Worked on / Decided / Learned about operator / Open threads), proposes `append_to_note('_memory/<YYYY-MM-DD>.md', entry)` via the existing diff card.
+- **Cascade integration:** `LiveMemoryProvider` now reads the most-recent N journal files and prepends them ABOVE the CLAUDE.md cascade in the system prompt. Default `journalCascadeDays = 3`.
+- New `src/memory/journal.ts` (pure helpers): `journalPathFor`, `isJournalPath`, `formatJournalSection`, `listRecentJournals`, `formatJournalCascade`.
+- New `src/memory/JournalGenerator.ts`: `AnthropicJournalGenerator` drives the model with a tight system prompt that mandates the four-bullet format + forbids sycophancy in "Learned about operator" bullets.
+- New `ChatView.recentHistory()` — read-only snapshot of in-memory chat history.
+- 3 new settings: `journalEnabled` (default false — opt-in per ADR-033 D7), `journalCascadeDays` (3), `journalModel` (Sonnet default).
+- **Zero new write tools** — composes existing `append_to_note` / `create_note` per ADR-016 D2 + ADR-028 lesson 2.
+- 4 named v1.5.x follow-up slots: auto-trigger, retention policy, per-conversation delta journal, journals side panel.
+- Tests: +24 (1118 total).
+
 ## [1.4.2] — 2026-05-15 (Per-client MCP token slots — ADR-032)
 
 - **Named per-client MCP tokens.** The single shared `mcpToken` becomes an array of `mcpTokens`, each entry with a name (`claude-desktop`, `cursor`, `cline`), scope (`read` / `write` / `delete`), and independent revocation.

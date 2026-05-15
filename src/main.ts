@@ -102,6 +102,8 @@ import { verifyCitations, type CitationDriftReport } from './drafts/citationDrif
 import { AnthropicDraftingEngine, draftToFileContent } from './drafts/DraftingEngine';
 import { DraftStore } from './drafts/DraftStore';
 import { promotedPathFor } from './drafts/paths';
+import { AnthropicJournalGenerator, type JournalGenerationResult } from './memory/JournalGenerator';
+import { journalPathFor } from './memory/journal';
 import { LiveMemoryProvider } from './memory/LiveMemoryProvider';
 import { CallbackApprovalGate } from './writes/CallbackApprovalGate';
 import { ExternalProposalQueue } from './writes/ExternalProposalQueue';
@@ -520,6 +522,15 @@ export default class SagittariusPlugin extends Plugin {
       },
     });
 
+    // Phase 12 (v1.5.0) — reverse-memory journal per ADR-033 D2.
+    this.addCommand({
+      id: 'journal-session',
+      name: 'Journal this session',
+      callback: () => {
+        void this.runJournalSession();
+      },
+    });
+
     try {
       await this.initializeIndexing();
     } catch (err) {
@@ -831,6 +842,97 @@ export default class SagittariusPlugin extends Plugin {
    * integration deferred to v1.4.x once the suggestion shape
    * stabilizes from real use.
    */
+  /**
+   * Phase 12 (v1.5.0) — `Sagittarius: Journal this session` per
+   * ADR-033 D2. Generates a journal entry from the ChatView's
+   * recent conversation history; proposes an `append_to_note`
+   * (or `create_note` if today's journal doesn't exist) via the
+   * existing diff card per ADR-016 D2 + ADR-033 D8.
+   *
+   * Operator-triggered MVP — auto-trigger options ship in v1.5.1.
+   */
+  private async runJournalSession(): Promise<void> {
+    if (!this.settings.journalEnabled) {
+      new Notice(
+        'Sagittarius: journaling is off. Enable it in Settings → Sagittarius → Memory before running this command.',
+      );
+      return;
+    }
+    const bundle = await this.getAgentBundle();
+    if (bundle === null) {
+      new Notice('Sagittarius: set your Anthropic API key in Settings → Sagittarius first.');
+      return;
+    }
+
+    // Pull recent conversation history from the open ChatView, if any.
+    // No open chat = nothing to journal.
+    const chatLeaves = this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE);
+    if (chatLeaves.length === 0) {
+      new Notice(
+        'Sagittarius: no chat panel open. Have a conversation first, then run this command to journal it.',
+      );
+      return;
+    }
+    const chatView = chatLeaves[0].view as ChatView;
+    const history = chatView.recentHistory();
+    if (history.length === 0) {
+      new Notice('Sagittarius: chat history is empty — nothing to journal yet.');
+      return;
+    }
+
+    const adapter = new VaultAdapterImpl(this.app);
+    const generator = new AnthropicJournalGenerator({
+      messages: bundle.deps.messages,
+      budget: bundle.deps.budget,
+      settings: () => ({
+        journalModel: this.settings.journalModel,
+        timezone: this.settings.budgetResetTimezone,
+      }),
+    });
+
+    const notice = new Notice('Sagittarius: generating journal entry…', 0);
+    let result: JournalGenerationResult;
+    try {
+      // Title = last user message's first ~50 chars, for the H2 header.
+      const lastUser = [...history]
+        .reverse()
+        .find((m) => m.role === 'user');
+      const title = lastUser !== undefined && typeof lastUser.content === 'string'
+        ? lastUser.content.slice(0, 50).trim()
+        : 'Session';
+      result = await generator.generate({ history, title });
+    } catch (err) {
+      notice.hide();
+      const msg = err instanceof Error ? err.message : String(err);
+      new Notice(`Sagittarius: journal generation failed — ${msg}`);
+      return;
+    }
+    notice.hide();
+
+    const journalPath = journalPathFor(result.generatedAt, this.settings.budgetResetTimezone);
+    const exists = await adapter.exists(journalPath);
+    await this.activateChatView();
+    try {
+      if (exists) {
+        // Append a blank line + the new section so consecutive entries
+        // are visually separated in the file.
+        await bundle.deps.tools.execute('append_to_note', {
+          path: journalPath,
+          content: `\n\n${result.markdown}\n`,
+        });
+      } else {
+        await bundle.deps.tools.execute('create_note', {
+          path: journalPath,
+          content: `${result.markdown}\n`,
+        });
+      }
+      new Notice('Sagittarius: journal proposal sent to the chat panel — review and accept.');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      new Notice(`Sagittarius: journal append failed — ${msg}`);
+    }
+  }
+
   private async runSuggestDrafts(): Promise<void> {
     const adapter = new VaultAdapterImpl(this.app);
     const cache = new MetadataCacheImpl(this.app);
@@ -2660,6 +2762,12 @@ export default class SagittariusPlugin extends Plugin {
         app: this.app,
         getEnabled: () => this.settings.memoryEnabled,
         getMaxBytes: () => this.settings.memoryMaxBytes,
+        // Phase 12 (v1.5.0) — feed the journal cascade into the same
+        // memory provider per ADR-033 D5. Returns 0 (skip) when
+        // journaling is disabled or the operator turned cascade
+        // injection off, even if journals exist on disk.
+        getJournalCascadeDays: () =>
+          this.settings.journalEnabled ? this.settings.journalCascadeDays : 0,
       });
     }
 
