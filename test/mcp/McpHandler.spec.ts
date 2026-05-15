@@ -5,6 +5,7 @@ import { ToolRegistry } from '../../src/agent/ToolRegistry';
 import { JSON_RPC_ERROR } from '../../src/mcp/JsonRpc';
 import { MCP_PROTOCOL_VERSION, McpHandler } from '../../src/mcp/McpHandler';
 import type { ToolDefinition } from '../../src/agent/types';
+import type { WriteToolContext } from '../../src/writes/WriteToolContext';
 
 function makeRegistry(tools: ToolDefinition[]): ToolRegistry {
   const r = new ToolRegistry();
@@ -217,5 +218,90 @@ describe('McpHandler', () => {
     const h = makeHandler(makeRegistry([]));
     const res = await h.handle({ jsonrpc: '2.0', id: 'abc-123', method: 'initialize' });
     expect(res.id).toBe('abc-123');
+  });
+
+  // Phase 6.7+ (v1.4.2) — scope-aware tools/list + tools/call per ADR-032 D2.
+  describe('per-token scope (ADR-032)', () => {
+    it('legacy default (no auth arg) keeps pre-ADR-032 behavior — all tools the globals allow', async () => {
+      const h = makeHandler(makeRegistry([fakeReadNote()]));
+      const res = await h.handle({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+      // No write settings configured → only read tools — matches the old default.
+      const tools = ((res as { result?: { tools?: Array<{ name: string }> } }).result?.tools ?? []).map(
+        (t) => t.name,
+      );
+      expect(tools).toContain('read_note');
+    });
+
+    function makeWriteEnabledHandler(): McpHandler {
+      // Minimal write context stub — we only test exposure / tools/list,
+      // never call into the write path itself.
+      const fakeContext = {
+        begin: () => {},
+        record: () => {},
+        end: () => null,
+        abandon: () => {},
+      } as unknown as WriteToolContext;
+      return new McpHandler({
+        toolRegistry: makeRegistry([fakeReadNote()]),
+        pluginVersion: '0.0',
+        logger: { warn: () => {} },
+        writeSettings: () => ({
+          mcpWriteEnabled: true,
+          mcpHighRiskToolsEnabled: true,
+          mcpWriteRateLimitPerHour: 100,
+          mcpWriteQueueTimeoutMs: 30_000,
+        }) as ReturnType<NonNullable<ConstructorParameters<typeof McpHandler>[0]['writeSettings']>>,
+        writeContext: fakeContext,
+      });
+    }
+
+    it('read scope drops every write tool from tools/list even when globals would allow them', async () => {
+      const h = makeWriteEnabledHandler();
+      const res = await h.handle(
+        { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+        { tokenName: 'cline', scope: 'read' },
+      );
+      const tools = ((res as { result?: { tools?: Array<{ name: string }> } }).result?.tools ?? []).map(
+        (t) => t.name,
+      );
+      // No write tools — read scope drops them all (including delete_note).
+      expect(tools).not.toContain('create_note');
+      expect(tools).not.toContain('patch_note');
+      expect(tools).not.toContain('delete_note');
+    });
+
+    it('write scope drops only the high-risk tier (delete_note)', async () => {
+      const h = makeWriteEnabledHandler();
+      const res = await h.handle(
+        { jsonrpc: '2.0', id: 1, method: 'tools/list' },
+        { tokenName: 'cursor', scope: 'write' },
+      );
+      const tools = ((res as { result?: { tools?: Array<{ name: string }> } }).result?.tools ?? []).map(
+        (t) => t.name,
+      );
+      expect(tools).not.toContain('delete_note');
+    });
+
+    // (Note: a "delete scope sees everything" assertion requires
+    // registering every MCP tool in the test registry, which couples
+    // this test to the full tool catalog. The read/write filter tests
+    // above already verify the scope semantics — the superset
+    // relationship is enforced by the implementation.)
+
+    it('tools/call denies an out-of-scope tool with METHOD_NOT_FOUND', async () => {
+      const h = makeHandler(makeRegistry([fakeReadNote()]));
+      // No writeSettings configured AND scope=read → write tools aren't exposed
+      // AND a write call should be rejected indistinguishably from "unknown tool".
+      const res = await h.handle(
+        {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: { name: 'create_note', arguments: {} },
+        },
+        { tokenName: 'cline', scope: 'read' },
+      );
+      expect('error' in res && res.error.code).toBe(JSON_RPC_ERROR.METHOD_NOT_FOUND);
+    });
   });
 });

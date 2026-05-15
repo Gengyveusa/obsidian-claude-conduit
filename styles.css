@@ -618,3 +618,38 @@
   color: var(--text-muted);
   font-style: italic;
 }
+
+/* Phase 6.7+ (v1.4.2) — per-client MCP tokens table per ADR-032 D7 */
+.sagittarius-mcp-tokens {
+  margin-top: 1em;
+}
+
+.sagittarius-mcp-tokens-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.sagittarius-mcp-tokens-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+  margin-bottom: 0.5em;
+}
+
+.sagittarius-mcp-tokens-table th {
+  text-align: left;
+  padding: 0.3em 0.6em;
+  border-bottom: 1px solid var(--background-modifier-border);
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.sagittarius-mcp-tokens-table td {
+  padding: 0.3em 0.6em;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.sagittarius-mcp-tokens-table button {
+  font-size: 0.8em;
+  padding: 0.15em 0.5em;
+}

@@ -13,6 +13,7 @@ import {
 import {
   type McpToolCallResult,
   isMcpExposed,
+  isMcpHighRiskTool,
   isMcpWriteTool,
   mcpExposedToolNames,
   mcpToolListFrom,
@@ -124,7 +125,18 @@ export class McpHandler {
     }
   }
 
-  async handle(rawBody: unknown): Promise<JsonRpcResponse> {
+  /**
+   * Phase 6.7+ (v1.4.2) — `auth` describes the matched token's scope.
+   * Omitted = legacy/no-auth mode, treated as `delete` scope so the
+   * global toggles remain the only gate (matches pre-ADR-032 behavior).
+   */
+  async handle(
+    rawBody: unknown,
+    auth: { tokenName: string; scope: 'read' | 'write' | 'delete' } = {
+      tokenName: '',
+      scope: 'delete',
+    },
+  ): Promise<JsonRpcResponse> {
     const parsed = parseRequest(rawBody);
     if (!parsed.ok) {
       return parsed.response;
@@ -135,9 +147,9 @@ export class McpHandler {
         case 'initialize':
           return this.onInitialize(req);
         case 'tools/list':
-          return this.onToolsList(req);
+          return this.onToolsList(req, auth);
         case 'tools/call':
-          return await this.onToolsCall(req);
+          return await this.onToolsCall(req, auth);
         default:
           return errorResponse(
             req.id,
@@ -178,13 +190,19 @@ export class McpHandler {
     });
   }
 
-  private onToolsList(req: JsonRpcRequest): JsonRpcResponse {
-    const exposed = this.currentExposure();
+  private onToolsList(
+    req: JsonRpcRequest,
+    auth: { scope: 'read' | 'write' | 'delete' },
+  ): JsonRpcResponse {
+    const exposed = this.currentExposure(auth.scope);
     const tools = mcpToolListFrom(this.registry.definitions(), exposed);
     return successResponse(req.id, { tools });
   }
 
-  private async onToolsCall(req: JsonRpcRequest): Promise<JsonRpcResponse> {
+  private async onToolsCall(
+    req: JsonRpcRequest,
+    auth: { tokenName: string; scope: 'read' | 'write' | 'delete' },
+  ): Promise<JsonRpcResponse> {
     const params = req.params;
     if (params === null || typeof params !== 'object') {
       return errorResponse(
@@ -201,7 +219,15 @@ export class McpHandler {
         '`params.name` must be a non-empty string',
       );
     }
-    const exposed = this.currentExposure();
+    // v1.4.2 (ADR-032 D8): when authenticated by a named token, the
+    // token name (operator-controlled, auth-verified) replaces the
+    // clientInfo.name (client-supplied) as the `source` label on
+    // proposals + activity events. Legacy/no-auth keeps the
+    // pre-ADR-032 clientInfo behavior set during `initialize`.
+    if (auth.tokenName.length > 0) {
+      this.clientName = `mcp:${auth.tokenName}`;
+    }
+    const exposed = this.currentExposure(auth.scope);
     if (!isMcpExposed(obj.name, exposed)) {
       // Tool exists in the registry but isn't on the current exposure
       // set (read-only when write-side is off, or unknown name).
@@ -278,19 +304,45 @@ export class McpHandler {
   }
 
   /**
-   * Compute the current exposure set from the supplied `writeSettings`
-   * accessor. When no accessor was supplied, exposure is the v0.9.x
-   * read-only set.
+   * Compute the current exposure set, intersected with the auth
+   * scope per ADR-032 D2+D3. Globals are circuit-breakers (upper
+   * bound); per-token scope is the day-to-day permission. A token
+   * never sees a tool that's either above its scope OR blocked by
+   * a global toggle.
+   *
+   * @param scope The matching token's scope (`read` / `write` / `delete`).
+   *   For legacy single-token mode HttpListener passes `delete` so
+   *   the pre-ADR-032 behavior (globals are the only gate) is
+   *   preserved exactly.
    */
-  private currentExposure(): ReadonlySet<string> {
-    if (this.writeSettings === undefined) {
-      return mcpExposedToolNames({ writeEnabled: false, highRiskEnabled: false });
+  private currentExposure(scope: 'read' | 'write' | 'delete'): ReadonlySet<string> {
+    // 1. What the globals would allow.
+    const globalSet =
+      this.writeSettings === undefined
+        ? mcpExposedToolNames({ writeEnabled: false, highRiskEnabled: false })
+        : mcpExposedToolNames({
+            writeEnabled: this.writeSettings().mcpWriteEnabled,
+            highRiskEnabled: this.writeSettings().mcpHighRiskToolsEnabled,
+          });
+    // 2. Filter by scope. `read` drops everything that isn't a read
+    // tool; `write` drops only the high-risk tier; `delete` keeps
+    // whatever the globals permit.
+    if (scope === 'delete') {
+      return globalSet;
     }
-    const s = this.writeSettings();
-    return mcpExposedToolNames({
-      writeEnabled: s.mcpWriteEnabled,
-      highRiskEnabled: s.mcpHighRiskToolsEnabled,
-    });
+    const filtered = new Set<string>();
+    for (const name of globalSet) {
+      if (isMcpHighRiskTool(name)) {
+        // High-risk requires `delete` scope.
+        continue;
+      }
+      if (scope === 'read' && isMcpWriteTool(name)) {
+        // Read scope drops write tools too.
+        continue;
+      }
+      filtered.add(name);
+    }
+    return filtered;
   }
 
   /**

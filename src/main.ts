@@ -41,6 +41,7 @@ import { RetrievalLayer } from './retrieval/RetrievalLayer';
 import type { SqliteEngine } from './retrieval/SqliteEngine';
 import { JsonActivityLog, type ActivityLog } from './activity/ActivityLog';
 import { generateBearerToken, hashToken } from './mcp/auth';
+import { migrateLegacyToken, validateTokenName } from './mcp/tokens';
 import { McpServer } from './mcp/McpServer';
 import { SagittariusSettingTab } from './settings/SagittariusSettingTab';
 import { DEFAULT_SETTINGS, type SagittariusSettings } from './settings/types';
@@ -589,9 +590,9 @@ export default class SagittariusPlugin extends Plugin {
     if (!this.settings.mcpEnabled) {
       return;
     }
-    if (this.settings.mcpToken.length === 0) {
+    if (this.settings.mcpTokens.length === 0) {
       new Notice(
-        'Sagittarius: MCP enabled but no token configured. Generate one in settings.',
+        'Sagittarius: MCP enabled but no tokens configured. Generate one in Settings → Sagittarius → MCP tokens.',
       );
       return;
     }
@@ -601,7 +602,12 @@ export default class SagittariusPlugin extends Plugin {
       return;
     }
     const server = new McpServer({
-      tokenHash: this.settings.mcpToken,
+      // v1.4.2 (ADR-032): array accessor over single token. Live-reads
+      // so settings edits propagate without restart.
+      tokens: () => this.settings.mcpTokens,
+      onTokenUsed: (tokenName) => {
+        void this.recordTokenUsed(tokenName);
+      },
       port: this.settings.mcpPort,
       allowedClients: this.settings.mcpAllowedClients,
       toolRegistry: bundle.deps.tools,
@@ -639,15 +645,74 @@ export default class SagittariusPlugin extends Plugin {
   }
 
   /**
-   * v0.9.0 PR 4 — generate a fresh bearer token, hash it, persist the
-   * hash, return the raw token for one-time display in settings.
-   * Caller is responsible for showing it to the user.
+   * Phase 6.7+ (v1.4.2) — generate a fresh named MCP token per
+   * ADR-032 D7. Validates the name (per ADR-032 D4), generates a
+   * random token, hashes it, stores the entry, returns the raw
+   * token for one-time display.
+   *
+   * Throws on duplicate name or invalid name format.
+   *
+   * @example
+   *   const raw = await plugin.generateMcpToken('cursor', 'write');
+   *   // show `raw` in a modal with a Copy button; it's gone after dismiss
    */
-  async generateMcpToken(): Promise<string> {
-    const token = generateBearerToken();
-    this.settings.mcpToken = await hashToken(token);
+  async generateMcpToken(
+    name: string,
+    scope: 'read' | 'write' | 'delete' = 'write',
+  ): Promise<string> {
+    const validationError = validateTokenName(name);
+    if (validationError !== null) {
+      throw new Error(validationError);
+    }
+    if (this.settings.mcpTokens.some((t) => t.name === name)) {
+      throw new Error(`token named '${name}' already exists; revoke it first`);
+    }
+    const raw = generateBearerToken();
+    this.settings.mcpTokens.push({
+      name,
+      hash: await hashToken(raw),
+      scope,
+      createdAt: Date.now(),
+      lastUsedAt: null,
+    });
     await this.saveSettings();
-    return token;
+    return raw;
+  }
+
+  /**
+   * Phase 6.7+ (v1.4.2) — revoke a named token. Returns `true` if
+   * an entry was removed; `false` if no entry with that name existed.
+   */
+  async revokeMcpToken(name: string): Promise<boolean> {
+    const before = this.settings.mcpTokens.length;
+    this.settings.mcpTokens = this.settings.mcpTokens.filter((t) => t.name !== name);
+    if (this.settings.mcpTokens.length === before) {
+      return false;
+    }
+    await this.saveSettings();
+    return true;
+  }
+
+  /**
+   * Phase 6.7+ (v1.4.2) — update `lastUsedAt` on every authenticated
+   * MCP call per ADR-032 D6. Fire-and-forget; failures log a warn
+   * but don't propagate (the request itself already succeeded).
+   */
+  private async recordTokenUsed(tokenName: string): Promise<void> {
+    if (tokenName.length === 0) {
+      return; // legacy mode — no entry to update
+    }
+    const entry = this.settings.mcpTokens.find((t) => t.name === tokenName);
+    if (entry === undefined) {
+      return; // token was revoked between auth and this callback
+    }
+    entry.lastUsedAt = Date.now();
+    try {
+      await this.saveSettings();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[sagittarius] failed to persist mcp lastUsedAt for '${tokenName}': ${msg}`);
+    }
   }
 
   /**
@@ -1088,6 +1153,12 @@ export default class SagittariusPlugin extends Plugin {
       ...DEFAULT_SETTINGS,
       ...(rest as Partial<SagittariusSettings>),
     };
+    // Phase 6.7+ (v1.4.2) — migrate single-token data shape to the
+    // named-token array per ADR-032 D10. Idempotent: once `mcpTokens`
+    // is non-empty, future loads pass through unchanged.
+    if (migrateLegacyToken(this.settings)) {
+      await this.saveSettings();
+    }
   }
 
   async saveSettings(): Promise<void> {

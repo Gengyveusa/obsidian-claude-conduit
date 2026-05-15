@@ -138,27 +138,7 @@ export class SagittariusSettingTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(parent)
-      .setName('Bearer token')
-      .setDesc(
-        this.plugin.settings.mcpToken.length === 0
-          ? 'No token set. Click "Generate" to mint one. The raw value will display once — copy it then.'
-          : 'A token is configured (hashed at rest). Click "Regenerate" to mint a fresh one — the old one stops working.',
-      )
-      .addButton((btn) => {
-        btn
-          .setButtonText(this.plugin.settings.mcpToken.length === 0 ? 'Generate' : 'Regenerate')
-          .onClick(async () => {
-            const raw = await this.plugin.generateMcpToken();
-            new Notice(
-              `Sagittarius: token = ${raw}\n\n` +
-                'Copy now — won\'t show again. Paste into your MCP client config.',
-              30_000,
-            );
-            await this.plugin.refreshMcpServer();
-            this.display();
-          });
-      });
+    this.renderMcpTokensTable(parent);
 
     new Setting(parent)
       .setName('Allowed clients')
@@ -178,6 +158,175 @@ export class SagittariusSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }),
       );
+  }
+
+  /**
+   * Phase 6.7+ (v1.4.2) — MCP tokens table per ADR-032 D7.
+   * Per-client named tokens with revoke buttons + a "generate new"
+   * affordance. Replaces the single-token Generate/Regenerate widget.
+   */
+  private renderMcpTokensTable(parent: HTMLElement): void {
+    const wrap = parent.createDiv({ cls: 'sagittarius-mcp-tokens' });
+    wrap.createEl('h4', { text: 'MCP tokens' });
+    wrap.createEl('p', {
+      cls: 'setting-item-description',
+      text:
+        'One token per MCP client (Claude Desktop, Cursor, Cline, etc.). ' +
+        'Each token has its own scope and can be revoked independently. ' +
+        'Raw token values are shown once on generation; the plugin stores only the hash.',
+    });
+
+    const tokens = this.plugin.settings.mcpTokens;
+    if (tokens.length === 0) {
+      wrap.createEl('p', {
+        cls: 'sagittarius-mcp-tokens-empty',
+        text:
+          'No tokens configured. Click "Generate new token" below to mint one per MCP client.',
+      });
+    } else {
+      const list = wrap.createEl('table', { cls: 'sagittarius-mcp-tokens-table' });
+      const headerRow = list.createEl('tr');
+      for (const h of ['Name', 'Scope', 'Last used', '']) {
+        headerRow.createEl('th', { text: h });
+      }
+      for (const entry of [...tokens].sort((a, b) => a.createdAt - b.createdAt)) {
+        const row = list.createEl('tr');
+        row.createEl('td', { text: entry.name });
+        row.createEl('td', { text: entry.scope });
+        row.createEl('td', { text: formatLastUsed(entry.lastUsedAt) });
+        const actions = row.createEl('td');
+        const btn = actions.createEl('button', { text: 'Revoke', cls: 'mod-warning' });
+        btn.addEventListener('click', () => {
+          void this.revokeTokenWithConfirm(entry.name);
+        });
+      }
+    }
+
+    new Setting(wrap)
+      .setName('Generate new token')
+      .setDesc(
+        'Mint a token for one MCP client. The raw value displays in a Notice ' +
+          'for 30s — copy it immediately, it will not show again.',
+      )
+      .addButton((btn) => {
+        btn.setButtonText('Generate').onClick(() => {
+          void this.openGenerateTokenModal();
+        });
+      });
+  }
+
+  private async openGenerateTokenModal(): Promise<void> {
+    const { Modal } = await import('obsidian');
+    const modal = new Modal(this.plugin.app);
+    modal.titleEl.setText('Sagittarius — generate MCP token');
+    const { contentEl } = modal;
+    contentEl.empty();
+
+    contentEl.createEl('p', {
+      cls: 'setting-item-description',
+      text:
+        'Choose a memorable name for the client (e.g. claude-desktop, cursor, cline) ' +
+        'and the scope it should have. Names: lowercase letters/digits/_/-, ' +
+        'must be unique.',
+    });
+
+    const nameLabel = contentEl.createEl('label', { text: 'Name' });
+    nameLabel.style.display = 'block';
+    nameLabel.style.marginTop = '12px';
+    const nameInput = contentEl.createEl('input', {
+      type: 'text',
+      placeholder: 'claude-desktop',
+    });
+    nameInput.style.width = '100%';
+
+    const scopeLabel = contentEl.createEl('label', { text: 'Scope' });
+    scopeLabel.style.display = 'block';
+    scopeLabel.style.marginTop = '12px';
+    const scopeSelect = contentEl.createEl('select');
+    scopeSelect.style.width = '100%';
+    for (const s of ['read', 'write', 'delete'] as const) {
+      const opt = scopeSelect.createEl('option', { text: s, value: s });
+      if (s === 'write') {
+        opt.selected = true;
+      }
+    }
+
+    const buttons = contentEl.createDiv();
+    buttons.style.display = 'flex';
+    buttons.style.justifyContent = 'flex-end';
+    buttons.style.gap = '8px';
+    buttons.style.marginTop = '16px';
+    const cancelBtn = buttons.createEl('button', { text: 'Cancel' });
+    const createBtn = buttons.createEl('button', { text: 'Create', cls: 'mod-cta' });
+
+    cancelBtn.addEventListener('click', () => modal.close());
+    createBtn.addEventListener('click', () => {
+      void (async () => {
+        const name = nameInput.value.trim();
+        const scope = scopeSelect.value as 'read' | 'write' | 'delete';
+        try {
+          const raw = await this.plugin.generateMcpToken(name, scope);
+          modal.close();
+          new Notice(
+            `Sagittarius: token for '${name}' (scope: ${scope}) =\n\n${raw}\n\n` +
+              "Copy now — won't show again. Paste into the MCP client's config.",
+            30_000,
+          );
+          await this.plugin.refreshMcpServer();
+          this.display();
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          new Notice(`Sagittarius: ${msg}`);
+        }
+      })();
+    });
+
+    nameInput.focus();
+    modal.open();
+  }
+
+  private async revokeTokenWithConfirm(name: string): Promise<void> {
+    const ok = await this.confirm(
+      `Revoke token '${name}'?`,
+      `The MCP client holding this token will be denied on its next request. You'll need to mint a fresh one + update that client's config to reconnect.`,
+    );
+    if (!ok) {
+      return;
+    }
+    await this.plugin.revokeMcpToken(name);
+    await this.plugin.refreshMcpServer();
+    new Notice(`Sagittarius: token '${name}' revoked.`);
+    this.display();
+  }
+
+  private async confirm(title: string, message: string): Promise<boolean> {
+    const { Modal } = await import('obsidian');
+    return new Promise<boolean>((resolve) => {
+      const modal = new Modal(this.plugin.app);
+      modal.titleEl.setText(title);
+      const { contentEl } = modal;
+      contentEl.empty();
+      contentEl.createEl('p', { text: message });
+      const row = contentEl.createDiv();
+      row.style.display = 'flex';
+      row.style.justifyContent = 'flex-end';
+      row.style.gap = '8px';
+      row.style.marginTop = '16px';
+      let answered = false;
+      const finalize = (val: boolean): void => {
+        if (answered) {
+          return;
+        }
+        answered = true;
+        resolve(val);
+        modal.close();
+      };
+      row.createEl('button', { text: 'Cancel' }).addEventListener('click', () => finalize(false));
+      const yes = row.createEl('button', { text: 'Revoke', cls: 'mod-warning' });
+      yes.addEventListener('click', () => finalize(true));
+      modal.onClose = (): void => finalize(false);
+      modal.open();
+    });
   }
 
   private renderMcpWriteSection(parent: HTMLElement): void {
@@ -1042,4 +1191,26 @@ export class SagittariusSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.voyageApiKey);
       });
   }
+}
+
+/** Render an `mcpTokens[i].lastUsedAt` epoch-ms timestamp as a short
+ *  human label ("never", "just now", "2 min ago", "3 days ago"). */
+function formatLastUsed(lastUsedAt: number | null): string {
+  if (lastUsedAt === null) {
+    return 'never';
+  }
+  const diffMs = Date.now() - lastUsedAt;
+  if (diffMs < 5_000) {
+    return 'just now';
+  }
+  if (diffMs < 60_000) {
+    return `${Math.floor(diffMs / 1000)}s ago`;
+  }
+  if (diffMs < 3_600_000) {
+    return `${Math.floor(diffMs / 60_000)} min ago`;
+  }
+  if (diffMs < 86_400_000) {
+    return `${Math.floor(diffMs / 3_600_000)} hr ago`;
+  }
+  return `${Math.floor(diffMs / 86_400_000)} days ago`;
 }

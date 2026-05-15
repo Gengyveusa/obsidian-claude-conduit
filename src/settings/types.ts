@@ -7,6 +7,29 @@
  * The API key field MUST never be committed to git; the plugin's data dir
  * is gitignored by default per spec §7 threat model.
  */
+/**
+ * Phase 6.7+ (v1.4.2) — one bearer-token entry in the MCP bridge's
+ * token list per [ADR-032](../../docs/2026-05-15-adr-032-mcp-token-slots.md).
+ *
+ * Operators name each token after the MCP client that holds it
+ * (`claude-desktop`, `cursor`, `cline`, etc.); the hash is the
+ * sha-256 of the raw token (shown once on generation, never stored).
+ * Scope caps the tools the token can see + call (D2). The `legacy`
+ * name is reserved for D10 migration.
+ */
+export interface McpTokenEntry {
+  /** Operator-supplied label, kebab-case 1-40 chars (D4). */
+  name: string;
+  /** sha-256 hex hash of the raw token (D5). */
+  hash: string;
+  /** Capability ceiling: `read` < `write` < `delete` (D2). */
+  scope: 'read' | 'write' | 'delete';
+  /** Epoch ms; for chronological sort in settings UI. */
+  createdAt: number;
+  /** Epoch ms of last successful auth; `null` if never used (D6). */
+  lastUsedAt: number | null;
+}
+
 export interface SagittariusSettings {
   // Anthropic API
   apiKey: string;
@@ -127,11 +150,33 @@ export interface SagittariusSettings {
    */
   mcpPort: number;
   /**
-   * SHA-256 hex hash of the bearer token. Generated on first enable;
-   * the raw token is shown once via "Reveal token" then re-hashed.
-   * Empty string = not yet generated; server refuses to start.
+   * **Deprecated as of v1.4.2 (ADR-032).** The single-token slot is
+   * preserved only for migration: on plugin load, when this field is
+   * non-empty AND `mcpTokens` is empty, the value is migrated into a
+   * `mcpTokens` entry named `legacy` (per ADR-032 D10) and this field
+   * is cleared. New code reads from `mcpTokens` exclusively.
    */
   mcpToken: string;
+  /**
+   * Phase 6.7+ (v1.4.2) — per-client MCP bearer tokens per
+   * [ADR-032](../../docs/2026-05-15-adr-032-mcp-token-slots.md). Each
+   * entry carries a named token (its sha-256 hash; raw is shown once
+   * on generation) and a scope tier (`read` / `write` / `delete`) that
+   * caps which tools the holder can see + call. Empty array = no
+   * tokens configured; the bridge refuses every request even if
+   * `mcpEnabled = true`.
+   *
+   * Scope semantics per ADR-032 D2:
+   *   - `read` — 5 read tools only
+   *   - `write` — 5 read + 9 write tools (still gated by `mcpWriteEnabled`)
+   *   - `delete` — `write` set + `delete_note` (still gated by
+   *     `mcpHighRiskToolsEnabled`)
+   *
+   * Global toggles (`mcpWriteEnabled`, `mcpHighRiskToolsEnabled`)
+   * become circuit-breakers per ADR-032 D3 — they cap what any
+   * scope can actually do.
+   */
+  mcpTokens: McpTokenEntry[];
   /**
    * Optional allowlist of MCP `clientInfo.name` values. Empty = any
    * authenticated client may connect. Use to restrict the bridge to
@@ -333,6 +378,7 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
   mcpEnabled: false,
   mcpPort: 8765,
   mcpToken: '',
+  mcpTokens: [],
   mcpAllowedClients: [],
 
   mcpWriteEnabled: false,

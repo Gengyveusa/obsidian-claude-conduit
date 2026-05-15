@@ -1,5 +1,6 @@
 import type { ActivityLog } from '../activity/ActivityLog';
 import type { ToolRegistry } from '../agent/ToolRegistry';
+import type { McpTokenEntry } from '../settings/types';
 import type { WriteToolContext } from '../writes/WriteToolContext';
 
 import { HttpListener, type HandlerResult, type HttpHandler } from './HttpListener';
@@ -32,8 +33,24 @@ import type { WriteGateSettings } from './WriteGate';
  *   await server.stop();
  */
 export interface McpServerDeps {
-  /** SHA-256 hex hash of the bearer token. Empty string = refuse to start. */
-  tokenHash: string;
+  /**
+   * **Deprecated as of v1.4.2 (ADR-032).** Legacy single-token mode.
+   * Kept for back-compat + tests; when `tokens` is supplied, this
+   * field is ignored. Empty string + empty `tokens` = refuse to start.
+   */
+  tokenHash?: string;
+  /**
+   * Phase 6.7+ (v1.4.2) — per-client token array accessor per
+   * [ADR-032](../../docs/2026-05-15-adr-032-mcp-token-slots.md).
+   * Read on every auth attempt so live settings edits reflect
+   * immediately. When supplied, supersedes `tokenHash`.
+   */
+  tokens?: () => ReadonlyArray<McpTokenEntry>;
+  /**
+   * Phase 6.7+ (v1.4.2) — called on every successful auth so the
+   * plugin can update `lastUsedAt` for the matching entry.
+   */
+  onTokenUsed?: (tokenName: string) => void;
   /** Localhost port to bind. Default 8765 per ADR-021 D6. */
   port: number;
   /** MCP `clientInfo.name` allowlist. Empty = any authenticated client. */
@@ -88,7 +105,10 @@ export class McpServer {
       deps.listener ??
       new HttpListener({
         port: deps.port,
-        tokenHash: deps.tokenHash,
+        ...(deps.tokens !== undefined
+          ? { tokens: deps.tokens }
+          : { tokenHash: deps.tokenHash ?? '' }),
+        ...(deps.onTokenUsed !== undefined && { onTokenUsed: deps.onTokenUsed }),
         logger: this.logger,
       });
     this.listener.setHandler(this.makeHandler());
@@ -102,9 +122,14 @@ export class McpServer {
     if (this.started) {
       return;
     }
-    if (this.deps.tokenHash.length === 0) {
+    // v1.4.2: refuse to start if neither auth source is configured.
+    // `tokens` (array-mode) wins when supplied; otherwise fall back
+    // to the legacy single hash.
+    const hasArrayAuth = this.deps.tokens !== undefined && this.deps.tokens().length > 0;
+    const hasLegacyAuth = (this.deps.tokenHash ?? '').length > 0;
+    if (!hasArrayAuth && !hasLegacyAuth) {
       throw new Error(
-        'McpServer: refusing to start without a configured bearer token (settings.mcpToken).',
+        'McpServer: refusing to start without any configured MCP tokens (settings.mcpTokens).',
       );
     }
     await this.listener.start();
@@ -144,8 +169,13 @@ export class McpServer {
    * transport is healthy but the payload may carry an error).
    */
   private makeHandler(): HttpHandler {
-    return async (_req, body): Promise<HandlerResult> => {
-      const jsonRpcResponse = await this.mcpHandler.handle(body);
+    return async (_req, body, auth): Promise<HandlerResult> => {
+      // v1.4.2 (ADR-032): pass the auth context to the handler so it
+      // can filter tools/list and gate tools/call per scope.
+      const jsonRpcResponse = await this.mcpHandler.handle(body, {
+        tokenName: auth.tokenName,
+        scope: auth.scope,
+      });
       return {
         status: 200,
         body: jsonRpcResponse,
