@@ -1,7 +1,7 @@
 ---
 title: "ADR-032: Per-client MCP token slots (v1.4.2 substrate)"
 type: decision
-status: "Proposed (D1-D10 await batch acceptance)"
+status: "Accepted (D1-D10 batch-accepted 2026-05-15)"
 date: 2026-05-15
 ---
 

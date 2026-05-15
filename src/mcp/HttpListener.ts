@@ -1,6 +1,9 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http';
 
+import type { McpTokenEntry } from '../settings/types';
+
 import { parseBearerHeader, verifyToken } from './auth';
+import { authenticateBearerHeader } from './tokens';
 
 /**
  * Phase 6.5 (v0.9.0 PR 2) — HTTP listener for the MCP bridge per
@@ -31,10 +34,39 @@ import { parseBearerHeader, verifyToken } from './auth';
 export interface HttpListenerDeps {
   /** Localhost port to bind. */
   port: number;
-  /** SHA-256 hex hash of the bearer token. Empty = reject everything (401). */
-  tokenHash: string;
+  /**
+   * **Deprecated as of v1.4.2 (ADR-032).** Legacy single-token mode.
+   * When `tokens` is also provided, `tokens` wins; this field is kept
+   * for tests + back-compat. Empty string + empty `tokens` = reject
+   * everything (401).
+   */
+  tokenHash?: string;
+  /**
+   * Phase 6.7+ (v1.4.2) — accessor for the current token array per
+   * [ADR-032](../../docs/2026-05-15-adr-032-mcp-token-slots.md).
+   * Read on every auth attempt so live settings edits (operator
+   * adds/revokes a token) take effect on the next request.
+   *
+   * Empty array = reject everything. When both `tokens` and
+   * `tokenHash` are supplied, `tokens` wins.
+   */
+  tokens?: () => ReadonlyArray<McpTokenEntry>;
+  /**
+   * Phase 6.7+ (v1.4.2) — called on every successful auth so the
+   * plugin can update `lastUsedAt` per ADR-032 D6. Receives the
+   * matching entry's name.
+   */
+  onTokenUsed?: (tokenName: string) => void;
   /** Test-injectable logger. */
   logger?: { warn: (msg: string) => void; info?: (msg: string) => void };
+}
+
+/** Authentication outcome attached to each authenticated request. */
+export interface AuthContext {
+  /** Matching token's name; empty string for legacy single-token mode. */
+  tokenName: string;
+  /** Scope from the matching entry; `delete` for legacy mode (all-allow). */
+  scope: McpTokenEntry['scope'];
 }
 
 /** Result type for the request handler. JSON-serialized into the response body. */
@@ -49,7 +81,11 @@ export interface HandlerResult {
  * was application/json, otherwise the raw text). Throws are caught
  * and turned into 500 responses with `{error: msg}`.
  */
-export type HttpHandler = (req: IncomingMessage, body: unknown) => Promise<HandlerResult>;
+export type HttpHandler = (
+  req: IncomingMessage,
+  body: unknown,
+  auth: AuthContext,
+) => Promise<HandlerResult>;
 
 const BIND_ADDRESS = '127.0.0.1';
 const MAX_BODY_BYTES = 1 << 20; // 1 MiB; MCP messages are tiny — anything bigger is abuse.
@@ -57,13 +93,17 @@ const MAX_BODY_BYTES = 1 << 20; // 1 MiB; MCP messages are tiny — anything big
 export class HttpListener {
   private readonly logger: { warn: (msg: string) => void; info?: (msg: string) => void };
   private readonly tokenHash: string;
+  private readonly tokens: (() => ReadonlyArray<McpTokenEntry>) | null;
+  private readonly onTokenUsed: ((tokenName: string) => void) | null;
   private readonly port: number;
   private server: Server | null = null;
   private handler: HttpHandler | null = null;
 
   constructor(deps: HttpListenerDeps) {
     this.port = deps.port;
-    this.tokenHash = deps.tokenHash;
+    this.tokenHash = deps.tokenHash ?? '';
+    this.tokens = deps.tokens ?? null;
+    this.onTokenUsed = deps.onTokenUsed ?? null;
     this.logger = deps.logger ?? {
       warn: (msg) => console.warn(`[mcp-http] ${msg}`),
       info: (msg) => console.warn(`[mcp-http] ${msg}`),
@@ -169,21 +209,43 @@ export class HttpListener {
       return;
     }
 
-    // Auth.
+    // Auth — v1.4.2 (ADR-032): prefer the token-array accessor when
+    // configured; fall back to legacy single-hash mode for back-compat
+    // (existing tests + pre-migration installs).
     const authHeader = req.headers.authorization ?? null;
-    const candidateToken = parseBearerHeader(authHeader);
-    if (candidateToken === null) {
-      this.writeJson(res, 401, { error: 'missing Bearer token' });
-      return;
-    }
-    if (this.tokenHash.length === 0) {
-      this.writeJson(res, 401, { error: 'server token not configured' });
-      return;
-    }
-    const ok = await verifyToken(candidateToken, this.tokenHash);
-    if (!ok) {
-      this.writeJson(res, 401, { error: 'invalid Bearer token' });
-      return;
+    let auth: AuthContext;
+    if (this.tokens !== null) {
+      const tokens = this.tokens();
+      if (tokens.length === 0) {
+        this.writeJson(res, 401, { error: 'server has no MCP tokens configured' });
+        return;
+      }
+      const lookup = await authenticateBearerHeader(authHeader, tokens);
+      if (!lookup.ok || lookup.entry === null) {
+        this.writeJson(res, 401, { error: 'invalid Bearer token' });
+        return;
+      }
+      this.onTokenUsed?.(lookup.entry.name);
+      auth = { tokenName: lookup.entry.name, scope: lookup.entry.scope };
+    } else {
+      const candidateToken = parseBearerHeader(authHeader);
+      if (candidateToken === null) {
+        this.writeJson(res, 401, { error: 'missing Bearer token' });
+        return;
+      }
+      if (this.tokenHash.length === 0) {
+        this.writeJson(res, 401, { error: 'server token not configured' });
+        return;
+      }
+      const ok = await verifyToken(candidateToken, this.tokenHash);
+      if (!ok) {
+        this.writeJson(res, 401, { error: 'invalid Bearer token' });
+        return;
+      }
+      // Legacy mode: no entry to attach. Use 'delete' scope so the
+      // legacy path passes any per-scope checks — global toggles
+      // remain the gate.
+      auth = { tokenName: '', scope: 'delete' };
     }
 
     // Body.
@@ -214,7 +276,7 @@ export class HttpListener {
 
     let result: HandlerResult;
     try {
-      result = await this.handler(req, body);
+      result = await this.handler(req, body, auth);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.logger.warn(`handler threw: ${msg}`);

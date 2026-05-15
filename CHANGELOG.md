@@ -4,6 +4,18 @@ Versioning is semver-ish: minor bumps signal new user-facing capability,
 patch bumps are polish + bug fixes within a phase. Each phase has a plan
 ADR (numbered) and a close ADR (retrospective) — see `docs/`.
 
+## [1.4.2] — 2026-05-15 (Per-client MCP token slots — ADR-032)
+
+- **Named per-client MCP tokens.** The single shared `mcpToken` becomes an array of `mcpTokens`, each entry with a name (`claude-desktop`, `cursor`, `cline`), scope (`read` / `write` / `delete`), and independent revocation.
+- Generate via Settings → Sagittarius → MCP bridge → Generate; raw token shown once via Notice.
+- Revoke per-row from the tokens table.
+- Scope semantics (ADR-032 D2): `read` = 5 read tools only; `write` adds 9 write tools; `delete` adds `delete_note`. Strict supersets.
+- Global `mcpWriteEnabled` / `mcpHighRiskToolsEnabled` toggles become circuit-breakers per ADR-032 D3 — they cap whatever a scope can do.
+- External Proposals + activity log surface the **token name** (operator-verified) rather than the client-supplied `clientInfo.name`.
+- Migration (ADR-032 D10): existing single-token installs auto-migrate to a `legacy` entry on first plugin load; scope derived from current global toggles.
+- New helpers in `src/mcp/tokens.ts`: `lookupBearerToken`, `authenticateBearerHeader`, `migrateLegacyToken`, `validateTokenName`, `scopeAllows`.
+- Tests: +31 (1094 total).
+
 ## [1.4.1] — 2026-05-15 (Submission-prep: action-based description)
 
 - `manifest.json` description rewritten action-first per current Obsidian submission style guide ("Chat with your vault using Claude…" instead of "Native Obsidian plugin for Claude…").
