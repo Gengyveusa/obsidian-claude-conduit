@@ -20,6 +20,17 @@ export const CHAT_VIEW_TYPE = 'sagittarius-chat';
  */
 export class ChatView extends ItemView {
   private history: MessageParam[] = [];
+
+  /**
+   * Phase 12 (v1.5.0) — read-only snapshot of the in-memory chat
+   * history per ADR-033. `Sagittarius: Journal this session` reads
+   * this to summarize what the operator was working on. Returns a
+   * defensive copy so external callers can't mutate the live array.
+   */
+  recentHistory(): ReadonlyArray<MessageParam> {
+    return [...this.history];
+  }
+
   private mode: 'chat' | 'vault-qa' = 'chat';
   private messagesEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;

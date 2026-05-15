@@ -3,6 +3,7 @@ import type { App } from 'obsidian';
 import type { VaultAdapter } from '../agent/types';
 import type { MemoryProvider } from '../agent/ConduitAgent';
 
+import { formatJournalCascade } from './journal';
 import {
   collectMemory,
   formatMemoryPromptText,
@@ -34,6 +35,13 @@ export interface LiveMemoryProviderDeps {
   getEnabled: () => boolean;
   /** Live accessor — read each turn for the same reason. */
   getMaxBytes: () => number;
+  /**
+   * Phase 12 (v1.5.0) — count of recent journal files to inject above
+   * the CLAUDE.md cascade per ADR-033 D5. 0 disables the journal
+   * section entirely (operator opted out OR no journals yet). Live
+   * accessor so settings flips reflect immediately.
+   */
+  getJournalCascadeDays?: () => number;
 }
 
 export class LiveMemoryProvider implements MemoryProvider {
@@ -55,7 +63,24 @@ export class LiveMemoryProvider implements MemoryProvider {
       maxBytes: this.deps.getMaxBytes(),
     });
     this.latest = result;
-    return formatMemoryPromptText(result.sections);
+    const cascadeText = formatMemoryPromptText(result.sections);
+
+    // Phase 12 (v1.5.0) — prepend the recent journal cascade per
+    // ADR-033 D5 so the agent reads its own most-recent memory
+    // before the CLAUDE.md guidance.
+    const journalDays = this.deps.getJournalCascadeDays?.() ?? 0;
+    if (journalDays > 0) {
+      try {
+        const journalText = await formatJournalCascade(this.deps.adapter, journalDays);
+        if (journalText !== null && journalText.length > 0) {
+          return cascadeText === null ? journalText : `${journalText}\n\n${cascadeText}`;
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[sagittarius] journal cascade read failed: ${msg}`);
+      }
+    }
+    return cascadeText;
   }
 
   /**

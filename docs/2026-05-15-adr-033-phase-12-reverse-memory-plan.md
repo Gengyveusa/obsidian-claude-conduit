@@ -1,7 +1,7 @@
 ---
 title: "ADR-033: Phase 12 plan — Reverse-memory journal (v1.5.0)"
 type: decision
-status: "Proposed (D1-D10 await batch acceptance)"
+status: "Accepted (D1-D10 batch-accepted 2026-05-15)"
 date: 2026-05-15
 ---
 
