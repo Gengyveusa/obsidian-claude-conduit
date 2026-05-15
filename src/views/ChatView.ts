@@ -25,6 +25,8 @@ export class ChatView extends ItemView {
   private inputEl!: HTMLTextAreaElement;
   private sendButton!: HTMLButtonElement;
   private statusEl!: HTMLElement;
+  /** Phase 8 (v1.3.2) — draft-mode banner above the messages area. */
+  private draftBannerEl?: HTMLElement;
   private busy = false;
 
   constructor(
@@ -51,6 +53,8 @@ export class ChatView extends ItemView {
     const root = this.containerEl.createDiv({ cls: 'sagittarius-chat' });
 
     this.renderHeader(root);
+    this.draftBannerEl = root.createDiv({ cls: 'sagittarius-draft-banner' });
+    this.refreshDraftBanner();
     this.messagesEl = root.createDiv({ cls: 'sagittarius-messages' });
     this.renderEmptyState();
     this.renderInputRow(root);
@@ -61,6 +65,14 @@ export class ChatView extends ItemView {
     // route their proposals through this view's diff card.
     this.plugin.approvalGate.set((proposal) => this.requestApproval(proposal));
 
+    // Phase 8 (v1.3.2) — refresh draft banner on active-leaf changes
+    // so opening a draft makes the indicator appear instantly.
+    this.registerEvent(
+      this.plugin.app.workspace.on('active-leaf-change', () => {
+        this.refreshDraftBanner();
+      }),
+    );
+
     return Promise.resolve();
   }
 
@@ -68,6 +80,44 @@ export class ChatView extends ItemView {
     this.plugin.approvalGate.set(null);
     this.containerEl.empty();
     return Promise.resolve();
+  }
+
+  /**
+   * Phase 8 (v1.3.2) — return the active-file path when it's under
+   * `_drafts/`, else `null`. Used by both the per-send draft-mode
+   * scoping (passed to `chat()`) and the banner refresh.
+   */
+  private activeDraftPath(): string | null {
+    const file = this.plugin.app.workspace.getActiveFile();
+    if (file === null) {
+      return null;
+    }
+    return file.path.startsWith('_drafts/') ? file.path : null;
+  }
+
+  /**
+   * Phase 8 (v1.3.2) — render the draft-mode banner above the
+   * messages area. Shows the active draft path when one is open;
+   * hidden otherwise. Per ADR-026 D5(d) the banner is informational
+   * — to "exit" draft mode, open a non-draft file.
+   */
+  private refreshDraftBanner(): void {
+    if (this.draftBannerEl === undefined) {
+      return;
+    }
+    const draftPath = this.activeDraftPath();
+    this.draftBannerEl.empty();
+    if (draftPath === null) {
+      this.draftBannerEl.style.display = 'none';
+      return;
+    }
+    this.draftBannerEl.style.display = '';
+    this.draftBannerEl.createSpan({ text: 'Refining draft: ' });
+    this.draftBannerEl.createEl('code', { text: draftPath });
+    this.draftBannerEl.createSpan({
+      cls: 'sagittarius-draft-banner-hint',
+      text: ' — chat scopes edits here. Open another file to exit.',
+    });
   }
 
   /**
@@ -210,7 +260,18 @@ export class ChatView extends ItemView {
     const placeholder = this.appendAssistantPlaceholder();
 
     try {
-      const result = await agent.agent.chat(text, this.history, this.mode);
+      // Phase 8 (v1.3.2) — draft refine mode per ADR-026 D5(d)+D6(c).
+      // When the active file is a draft, scope the agent to refining
+      // it via patch_note. Detection is per-send so swapping files
+      // mid-conversation reflects on the next message.
+      const draftPath = this.activeDraftPath();
+      const result = await agent.agent.chat(
+        text,
+        this.history,
+        this.mode,
+        undefined,
+        draftPath,
+      );
       this.history.push({ role: 'user', content: text });
       this.history.push({ role: 'assistant', content: result.finalText });
       await this.fillAssistantMessage(placeholder, result);

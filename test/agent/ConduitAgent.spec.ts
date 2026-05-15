@@ -581,6 +581,65 @@ describe('ConduitAgent', () => {
       expect(memoryBlock).toBeUndefined();
     });
   });
+
+  // Phase 8 (v1.3.2) — draft refine mode per ADR-026 D5(d)+D6(c).
+  describe('draft refine mode', () => {
+    function captureSystemBlocks(): {
+      deps: ConduitAgentDeps;
+      received: MessageCreateParams[];
+    } {
+      const received: MessageCreateParams[] = [];
+      const { deps } = makeDeps({
+        messages: {
+          create: (p: MessageCreateParams) => {
+            received.push(p);
+            return Promise.resolve(
+              makeMessage({ stop_reason: 'end_turn', text: 'ok' }),
+            );
+          },
+        },
+      });
+      return { deps, received };
+    }
+
+    it('injects a draft-refine block when draftPath is provided', async () => {
+      const { deps, received } = captureSystemBlocks();
+      const agent = new ConduitAgent(deps, settings);
+      await agent.chat('tighten the intro', [], 'chat', undefined, '_drafts/30-Projects/q3.md');
+      const blocks = received[0].system as Array<{ text: string }>;
+      const draftBlock = blocks.find((b) => b.text.startsWith('Mode: DRAFT REFINE'));
+      expect(draftBlock).toBeDefined();
+      expect(draftBlock?.text).toContain('_drafts/30-Projects/q3.md');
+      expect(draftBlock?.text).toContain('patch_note');
+    });
+
+    it('omits the draft-refine block when draftPath is null', async () => {
+      const { deps, received } = captureSystemBlocks();
+      const agent = new ConduitAgent(deps, settings);
+      await agent.chat('hi', [], 'chat', undefined, null);
+      const blocks = received[0].system as Array<{ text: string }>;
+      const draftBlock = blocks.find((b) => b.text.startsWith('Mode: DRAFT REFINE'));
+      expect(draftBlock).toBeUndefined();
+    });
+
+    it('omits the draft-refine block when draftPath is omitted entirely', async () => {
+      const { deps, received } = captureSystemBlocks();
+      const agent = new ConduitAgent(deps, settings);
+      await agent.chat('hi', [], 'chat');
+      const blocks = received[0].system as Array<{ text: string }>;
+      const draftBlock = blocks.find((b) => b.text.startsWith('Mode: DRAFT REFINE'));
+      expect(draftBlock).toBeUndefined();
+    });
+
+    it('omits the draft-refine block when draftPath is an empty string', async () => {
+      const { deps, received } = captureSystemBlocks();
+      const agent = new ConduitAgent(deps, settings);
+      await agent.chat('hi', [], 'chat', undefined, '');
+      const blocks = received[0].system as Array<{ text: string }>;
+      const draftBlock = blocks.find((b) => b.text.startsWith('Mode: DRAFT REFINE'));
+      expect(draftBlock).toBeUndefined();
+    });
+  });
 });
 
 describe('isOverloaded()', () => {
