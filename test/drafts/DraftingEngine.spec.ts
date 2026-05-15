@@ -83,27 +83,42 @@ function fakeMessage(body: string, input = 500, output = 800): Message {
   } as unknown as Message;
 }
 
+interface HarnessOptions {
+  settings?: Partial<DraftingEngineSettings>;
+  /** Phase 9 — optional memory provider for v1.3.3 cascade tests. */
+  memory?: { collect: () => Promise<string | null> };
+}
+
 function buildHarness(
   responses: Message[],
   chunks: QueryResult[],
-  overrides: Partial<DraftingEngineSettings> = {},
+  opts: HarnessOptions | Partial<DraftingEngineSettings> = {},
 ): {
   engine: AnthropicDraftingEngine;
   messages: ScriptedMessages;
   budget: FakeBudget;
 } {
+  // Backward-compat: legacy test calls pass settings overrides directly.
+  const harnessOpts: HarnessOptions =
+    'settings' in opts || 'memory' in opts
+      ? opts
+      : { settings: opts as Partial<DraftingEngineSettings> };
   const messages = new ScriptedMessages(responses);
   const budget = new FakeBudget();
   const retrieval = new FakeRetrieval(chunks) as unknown as RetrievalLayer;
-  const settings: DraftingEngineSettings = { ...DEFAULT_SETTINGS, ...overrides };
-  const engine = new AnthropicDraftingEngine({
+  const settings: DraftingEngineSettings = { ...DEFAULT_SETTINGS, ...(harnessOpts.settings ?? {}) };
+  const deps: ConstructorParameters<typeof AnthropicDraftingEngine>[0] = {
     messages,
     retrieval,
     budget: budget as unknown as BudgetTracker,
     settings: () => settings,
     clock: () => 1_700_000_000,
     logger: { warn: () => {} },
-  });
+  };
+  if (harnessOpts.memory !== undefined) {
+    deps.memoryProvider = harnessOpts.memory;
+  }
+  const engine = new AnthropicDraftingEngine(deps);
   return { engine, messages, budget };
 }
 
@@ -264,5 +279,93 @@ describe('buildUserMessage', () => {
     expect(msg).toContain('alpha');
     expect(msg).toContain('beta');
     expect(msg).toMatch(/no preamble/);
+  });
+});
+
+// Phase 9 (v1.3.3) — drafting engine reads CLAUDE.md memory cascade per ADR-029.
+describe('AnthropicDraftingEngine memory injection', () => {
+  it('appends memory section to the system prompt when provider returns content', async () => {
+    const chunks = [fakeChunk('a.md', 0, 0.9, 'context')];
+    const { engine, messages } = buildHarness([fakeMessage('Cited [[a.md]].')], chunks, {
+      memory: { collect: () => Promise.resolve('# Memory: CLAUDE.md\n\nuse snake_case') },
+    });
+    await engine.generate({ topic: 't' });
+    const sentSystem = messages.received[0].system as string;
+    expect(sentSystem).toContain('# Operator memory');
+    expect(sentSystem).toContain('use snake_case');
+    // Ordering: persona before memory before output-format.
+    const personaIdx = sentSystem.indexOf('You are Sagittarius');
+    const memoryIdx = sentSystem.indexOf('# Operator memory');
+    const formatIdx = sentSystem.indexOf('Output format:');
+    expect(personaIdx).toBeLessThan(memoryIdx);
+    expect(memoryIdx).toBeLessThan(formatIdx);
+  });
+
+  it('omits the memory section when no provider is configured', async () => {
+    const chunks = [fakeChunk('a.md', 0, 0.9, 'context')];
+    const { engine, messages } = buildHarness([fakeMessage('Cited [[a.md]].')], chunks);
+    await engine.generate({ topic: 't' });
+    const sentSystem = messages.received[0].system as string;
+    expect(sentSystem).not.toContain('# Operator memory');
+  });
+
+  it('omits the memory section when the provider returns null', async () => {
+    const chunks = [fakeChunk('a.md', 0, 0.9, 'context')];
+    const { engine, messages } = buildHarness([fakeMessage('Cited [[a.md]].')], chunks, {
+      memory: { collect: () => Promise.resolve(null) },
+    });
+    await engine.generate({ topic: 't' });
+    const sentSystem = messages.received[0].system as string;
+    expect(sentSystem).not.toContain('# Operator memory');
+  });
+
+  it('degrades to no-memory when the provider throws (draft does not fail)', async () => {
+    const chunks = [fakeChunk('a.md', 0, 0.9, 'context')];
+    const { engine, messages } = buildHarness([fakeMessage('Cited [[a.md]].')], chunks, {
+      memory: {
+        collect: () => Promise.reject(new Error('vault on fire')),
+      },
+    });
+    const draft = await engine.generate({ topic: 't' });
+    expect(draft.body).toBe('Cited [[a.md]].');
+    const sentSystem = messages.received[0].system as string;
+    expect(sentSystem).not.toContain('# Operator memory');
+  });
+
+  it('passes memory to the retry on policy violation, not just the first attempt', async () => {
+    const chunks = [fakeChunk('a.md', 0, 0.9, 'context')];
+    // First fails marked policy, second is clean.
+    const bad = 'Cited [[a.md]].\n\nUnmarked synthesis.';
+    const good =
+      'Cited [[a.md]].\n\n<!-- uncited -->\nNow marked.\n<!-- /uncited -->';
+    const { engine, messages } = buildHarness(
+      [fakeMessage(bad), fakeMessage(good)],
+      chunks,
+      { memory: { collect: () => Promise.resolve('# Memory\n\nrules') } },
+    );
+    await engine.generate({ topic: 't' });
+    expect(messages.received).toHaveLength(2);
+    // Both calls carry the memory block.
+    expect(messages.received[0].system as string).toContain('# Operator memory');
+    expect(messages.received[1].system as string).toContain('# Operator memory');
+  });
+});
+
+describe('buildSystemPrompt with memory', () => {
+  it('appends a memory block when memory is non-empty', () => {
+    const prompt = buildSystemPrompt('marked', '# Memory\n\nrule');
+    expect(prompt).toContain('# Operator memory');
+    expect(prompt).toContain('rule');
+    expect(prompt).toContain('Output format:');
+  });
+
+  it('omits the memory block when memory is null (default)', () => {
+    const prompt = buildSystemPrompt('marked');
+    expect(prompt).not.toContain('# Operator memory');
+  });
+
+  it('omits the memory block when memory is an empty string', () => {
+    const prompt = buildSystemPrompt('marked', '');
+    expect(prompt).not.toContain('# Operator memory');
   });
 });
