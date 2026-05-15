@@ -4,6 +4,14 @@ Versioning is semver-ish: minor bumps signal new user-facing capability,
 patch bumps are polish + bug fixes within a phase. Each phase has a plan
 ADR (numbered) and a close ADR (retrospective) — see `docs/`.
 
+## [1.3.3] — 2026-05-15 (Drafting engine reads CLAUDE.md cascade)
+
+- **`AnthropicDraftingEngine` reads memory.** New optional `memoryProvider` dep; when set, the cascade text appears as a `# Operator memory` block between persona and output-format in the drafting system prompt.
+- Same provider instance ChatView uses; cascade anchors on the active file at the moment New Draft is invoked.
+- Provider errors degrade to "no memory" (warn-log only, draft doesn't fail) — mirrors `ConduitAgent`'s contract.
+- House-style + project conventions in `CLAUDE.md` now reach generative output, not just chat.
+- Tests: +8 (1039 total).
+
 ## [1.3.2] — 2026-05-15 (ChatView Draft mode — ADR-026 D5(d)+D6(c))
 
 - **ChatView Draft mode.** When the active file is under `_drafts/`, ChatView shows a "Refining draft: …" banner and the agent's system prompt scopes edits to that file via `patch_note`.

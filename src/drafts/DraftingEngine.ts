@@ -4,6 +4,7 @@ import type {
   TextBlock,
 } from '@anthropic-ai/sdk/resources/messages';
 
+import type { MemoryProvider } from '../agent/ConduitAgent';
 import type { BudgetTracker } from '../budget/BudgetTracker';
 import type { RetrievalLayer } from '../retrieval/RetrievalLayer';
 import type { QueryResult } from '../retrieval/types';
@@ -61,6 +62,20 @@ export interface DraftingEngineDeps {
   budget: BudgetTracker;
   /** Accessor — read on each call so settings flips reflect immediately. */
   settings: () => DraftingEngineSettings;
+  /**
+   * Phase 9 (v1.3.3) — CLAUDE.md cascade per ADR-029, injected into
+   * the drafting system prompt. Optional: when omitted (or when the
+   * provider returns null), no memory section is added. Provider
+   * errors degrade to "no memory" rather than failing the draft —
+   * mirrors `ConduitAgent`'s graceful-degradation contract.
+   *
+   * The cascade anchor is whatever the provider's underlying
+   * workspace state says — typically the user's active file at the
+   * moment they invoked `Sagittarius: New draft`. We don't anchor
+   * to the draft's eventual destination folder; the operator's
+   * present focus is what they want context from.
+   */
+  memoryProvider?: MemoryProvider;
   /** Test-injectable clock (epoch seconds). */
   clock?: () => number;
   /** Test-injectable logger. */
@@ -104,6 +119,19 @@ export class AnthropicDraftingEngine implements DraftingEngine {
 
     const candidate = chunks.map(toCitedChunk);
 
+    // Phase 9 (v1.3.3) — collect memory cascade per ADR-029. Provider
+    // errors degrade to "no memory" so a vault read failure doesn't
+    // sink the whole draft.
+    let memory: string | null = null;
+    if (this.deps.memoryProvider !== undefined) {
+      try {
+        memory = await this.deps.memoryProvider.collect();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.logger.warn(`memory provider failed: ${msg}`);
+      }
+    }
+
     // Reserve the output-token budget BEFORE the first call. A draft
     // typically runs 1500-4000 tokens; reserve the cap so cap-busts
     // surface before the network round-trip.
@@ -111,7 +139,7 @@ export class AnthropicDraftingEngine implements DraftingEngine {
 
     const firstAttempt = await this.callModel({
       model: settings.draftingModel,
-      systemPrompt: buildSystemPrompt(settings.citationPolicy),
+      systemPrompt: buildSystemPrompt(settings.citationPolicy, memory),
       userMessage: buildUserMessage(spec.topic, chunks),
     });
 
@@ -128,7 +156,7 @@ export class AnthropicDraftingEngine implements DraftingEngine {
         this.deps.budget.assertAvailable(MAX_OUTPUT_TOKENS);
         const second = await this.callModel({
           model: settings.draftingModel,
-          systemPrompt: buildSystemPrompt(settings.citationPolicy),
+          systemPrompt: buildSystemPrompt(settings.citationPolicy, memory),
           userMessage:
             buildUserMessage(spec.topic, chunks) +
             '\n\n## Revision note\n\n' +
@@ -226,12 +254,34 @@ export function buildUserMessage(topic: string, chunks: ReadonlyArray<QueryResul
  *
  * NOT cached at the model boundary (drafting is rare; the system
  * prompt is policy-dependent and tiny — caching gains are negligible).
+ *
+ * Phase 9 (v1.3.3) — `memory` (the CLAUDE.md cascade per ADR-029) is
+ * appended after the persona and before the output-format block, so
+ * operator-supplied house style + project conventions reach drafts
+ * the same way they reach chat. Empty / null = no memory section.
  */
-export function buildSystemPrompt(policy: CitationPolicy): string {
+export function buildSystemPrompt(
+  policy: CitationPolicy,
+  memory: string | null = null,
+): string {
   const policyClause = policyInstructions(policy);
-  return [
+  const lines: string[] = [
     'You are Sagittarius, drafting a note for a personal knowledge vault.',
     'You write in clear, direct prose. No buzzword soup. No filler.',
+  ];
+  if (memory !== null && memory.length > 0) {
+    lines.push('');
+    lines.push('# Operator memory (CLAUDE.md cascade)');
+    lines.push('');
+    lines.push(
+      'The following are durable instructions the operator placed in their vault. ' +
+        'Treat them as house rules — if they conflict with your own defaults, the ' +
+        'operator wins.',
+    );
+    lines.push('');
+    lines.push(memory);
+  }
+  lines.push(
     '',
     'Output format:',
     '- Pure markdown body. No frontmatter, no chat preamble, no commentary.',
@@ -244,9 +294,10 @@ export function buildSystemPrompt(policy: CitationPolicy): string {
     '',
     'Quality bar:',
     '- Every cited claim must be supported by the retrieved chunk you cite.',
-    '- If the chunks don\'t cover a corner of the topic, say so explicitly rather than inventing.',
+    "- If the chunks don't cover a corner of the topic, say so explicitly rather than inventing.",
     '- Synthesis is welcome — but mark it per the citation contract above.',
-  ].join('\n');
+  );
+  return lines.join('\n');
 }
 
 function policyInstructions(policy: CitationPolicy): string {

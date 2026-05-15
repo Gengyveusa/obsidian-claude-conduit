@@ -681,7 +681,7 @@ export default class SagittariusPlugin extends Plugin {
       return;
     }
 
-    const engine = new AnthropicDraftingEngine({
+    const engineDeps: ConstructorParameters<typeof AnthropicDraftingEngine>[0] = {
       messages: bundle.deps.messages,
       retrieval,
       budget: bundle.deps.budget,
@@ -691,7 +691,14 @@ export default class SagittariusPlugin extends Plugin {
         draftsDefaultDestination: this.settings.draftsDefaultDestination,
         retrievalK: this.settings.retrievalK,
       }),
-    });
+    };
+    // Phase 9 (v1.3.3) — drafting engine reads the same CLAUDE.md
+    // cascade as chat per ADR-029. Same provider instance; cascade
+    // anchors on the active file at the moment New Draft is invoked.
+    if (this.memoryProvider !== null) {
+      engineDeps.memoryProvider = this.memoryProvider;
+    }
+    const engine = new AnthropicDraftingEngine(engineDeps);
 
     const notice = new Notice(`Sagittarius: drafting '${inputs.topic}'…`, 0);
     try {
