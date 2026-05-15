@@ -16,39 +16,37 @@ Obsidian user.
 
 ## Pre-submission checklist
 
-These mirror the [official plugin-review guidelines](https://docs.obsidian.md/Plugins/Releasing/Submission+requirements+for+plugins):
+Verified against the [official submission requirements](https://docs.obsidian.md/Plugins/Releasing/Submission+requirements+for+plugins) as of 2026-05-15:
 
-- [x] `manifest.json` has `id`, `name`, `version`, `minAppVersion`, `description`, `author`, `authorUrl`, `isDesktopOnly`
+- [x] `manifest.json` has `id`, `name`, `version`, `minAppVersion`, `description`, `author`, `authorUrl`, `isDesktopOnly`, `fundingUrl`
 - [x] `id` matches the GitHub repo name (`obsidian-claude-conduit`)
-- [x] `id` does NOT start with `obsidian-` (✅ ours starts with the canonical `obsidian-` prefix per the *current* spec; the old "no obsidian-" rule was relaxed)
-- [x] No mention of "Obsidian" in the plugin `name` (`Sagittarius — Claude Conduit` ✅)
-- [x] No mention of "plugin" in the `name` or `description`
-- [x] `description` is one sentence, no ALL CAPS marketing
-- [x] First public release exists at the GitHub URL with `main.js`, `manifest.json`, `styles.css` attached as separate files (see [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md))
+- [x] `description` opens action-based ("Chat with your vault…") per the style guide; ends with a period; ≤250 chars; no emoji
+- [x] First public release exists at the GitHub URL with `main.js`, `manifest.json`, `styles.css` attached as separate files (see [RELEASE_CHECKLIST.md](./RELEASE_CHECKLIST.md)); release tag matches `manifest.json` version exactly (no `v` prefix)
 - [x] LICENSE file exists (we ship MIT)
 - [x] README has Install, Setup, and Usage sections
-- [x] No `console.log` left in production code (verify with `grep -r 'console\.log' src/`; `console.warn`/`error` are fine)
-- [ ] **Manual check:** plugin doesn't ship its own copy of jQuery, lodash, moment, or other libraries Obsidian already provides
-- [ ] **Manual check:** no hardcoded user paths (`/Users/...`, `C:\\...`)
-- [ ] **Manual check:** all network calls use Obsidian's `requestUrl()` not raw `fetch` (CORS in renderer process)
+- [x] No `console.log` in production code (verified — only one match is in a JSDoc `@example` block)
+- [x] No hardcoded user paths (`/Users/...`, `C:\...`)
+- [x] All network calls use Obsidian's `requestUrl()` not raw `fetch` (CORS in renderer process; v1.3.1 swapped the one localhost MCP probe to be safe)
+- [x] No bundled `jquery` / `lodash` / `moment` (verified)
+- [x] Tested on macOS + Windows (`isDesktopOnly: true`; iOS / Android N/A)
 
 ## The JSON entry
 
-Add this object to the END of the array in `community-plugins.json`
-(the file is a giant `[]` array of entries):
+Add this object to `community-plugins.json` (it's a giant array; alphabetic
+order by id is conventional but not strictly required):
 
 ```json
 {
   "id": "obsidian-claude-conduit",
   "name": "Sagittarius — Claude Conduit",
   "author": "GengyveUSA",
-  "description": "Native plugin for Claude — vault-aware chat, diff-first writes, organization + curator engines, activity stream, MCP bridge, generative drafting, CLAUDE.md memory cascade.",
+  "description": "Chat with your vault using Claude. Generate cited drafts, edit notes through diff-first proposals, surface CLAUDE.md memory at every turn, and bridge to Claude Desktop via MCP.",
   "repo": "gengyveusa/obsidian-claude-conduit"
 }
 ```
 
-> Note: the `description` here can be slightly different from
-> `manifest.json` — keep it under ~250 chars; reviewers will trim.
+The `description` matches `manifest.json` exactly so reviewers don't have
+to reconcile two strings.
 
 ## PR title + body template
 

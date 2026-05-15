@@ -4,6 +4,12 @@ Versioning is semver-ish: minor bumps signal new user-facing capability,
 patch bumps are polish + bug fixes within a phase. Each phase has a plan
 ADR (numbered) and a close ADR (retrospective) — see `docs/`.
 
+## [1.4.1] — 2026-05-15 (Submission-prep: action-based description)
+
+- `manifest.json` description rewritten action-first per current Obsidian submission style guide ("Chat with your vault using Claude…" instead of "Native Obsidian plugin for Claude…").
+- `docs/COMMUNITY_PLUGIN_SUBMISSION.md` checklist updated to reflect current docs (older "no 'plugin'/no 'Obsidian'" rules were inaccurate; current rule is action-based opening + ≤250 chars + period + no emoji).
+- No code changes; tests unchanged at 1063.
+
 ## [1.4.0] — 2026-05-15 (Proactive draft suggestions — ADR-026 D8(b))
 
 - **`Sagittarius: Suggest drafts`** — new command. Scans the vault for tags shared by N+ notes that lack a synthesis; surfaces a modal with one row per candidate and a "Draft this" button.
