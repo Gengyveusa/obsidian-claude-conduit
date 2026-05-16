@@ -316,6 +316,16 @@ export interface SagittariusSettings {
    */
   journalModel: 'claude-sonnet-4-6' | 'claude-opus-4-7' | 'claude-haiku-4-5-20251001';
 
+  // Phase 13 (v1.6.0) — conversational notes per ADR-034
+  /**
+   * Master switch for `Sagittarius: Save this conversation as a note`
+   * per ADR-034 D7. Opt-in (default false) — the feature writes
+   * full transcripts to the vault, which is a meaningful trust
+   * ask. ChatView per-conversation opt-out (v1.6.1) layers on top
+   * for sensitive sessions even when the global is on.
+   */
+  chatNotesEnabled: boolean;
+
   // Phase 9.x (v1.4.0) — proactive draft suggestions per ADR-026 D8(b)
   /**
    * Minimum tag-cluster size before `Sagittarius: Suggest drafts`
@@ -425,6 +435,8 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
   journalEnabled: false,
   journalCascadeDays: 3,
   journalModel: 'claude-sonnet-4-6',
+
+  chatNotesEnabled: false,
 
   draftSuggestionMinNotes: 5,
 

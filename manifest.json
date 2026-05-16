@@ -1,7 +1,7 @@
 {
   "id": "obsidian-claude-conduit",
   "name": "Sagittarius — Claude Conduit",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "minAppVersion": "1.4.0",
   "description": "Chat with your vault using Claude. Generate cited drafts, edit notes through diff-first proposals, surface CLAUDE.md memory at every turn, and bridge to Claude Desktop via MCP.",
   "author": "GengyveUSA",

@@ -102,6 +102,8 @@ import { verifyCitations, type CitationDriftReport } from './drafts/citationDrif
 import { AnthropicDraftingEngine, draftToFileContent } from './drafts/DraftingEngine';
 import { DraftStore } from './drafts/DraftStore';
 import { promotedPathFor } from './drafts/paths';
+import { renderChatNote } from './chats/ChatNoteWriter';
+import { chatNotePathFor, chatPathWithSuffix } from './chats/paths';
 import { AnthropicJournalGenerator, type JournalGenerationResult } from './memory/JournalGenerator';
 import { journalPathFor } from './memory/journal';
 import { LiveMemoryProvider } from './memory/LiveMemoryProvider';
@@ -531,6 +533,15 @@ export default class SagittariusPlugin extends Plugin {
       },
     });
 
+    // Phase 13 (v1.6.0) — conversational notes per ADR-034 D6.
+    this.addCommand({
+      id: 'save-conversation',
+      name: 'Save this conversation as a note',
+      callback: () => {
+        void this.runSaveConversation();
+      },
+    });
+
     try {
       await this.initializeIndexing();
     } catch (err) {
@@ -851,6 +862,85 @@ export default class SagittariusPlugin extends Plugin {
    *
    * Operator-triggered MVP — auto-trigger options ship in v1.5.1.
    */
+  /**
+   * Phase 13 (v1.6.0) — `Sagittarius: Save this conversation as a note`
+   * per ADR-034 D2 + D5. Reads ChatView history (Phase 12 substrate),
+   * renders via `renderChatNote` (pure), proposes `create_note` via
+   * the existing diff card per ADR-016 D2.
+   *
+   * Operator-triggered MVP — auto-save options ship in v1.6.1 per
+   * D10's named slot.
+   */
+  private async runSaveConversation(): Promise<void> {
+    if (!this.settings.chatNotesEnabled) {
+      new Notice(
+        'Sagittarius: chat notes are off. Enable in Settings → Sagittarius → Memory before saving conversations.',
+      );
+      return;
+    }
+    const bundle = await this.getAgentBundle();
+    if (bundle === null) {
+      new Notice('Sagittarius: set your Anthropic API key in Settings → Sagittarius first.');
+      return;
+    }
+
+    const chatLeaves = this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE);
+    if (chatLeaves.length === 0) {
+      new Notice(
+        'Sagittarius: no chat panel open. Have a conversation, then run this command to save it.',
+      );
+      return;
+    }
+    const chatView = chatLeaves[0].view as ChatView;
+    const history = chatView.recentHistory();
+    if (history.length === 0) {
+      new Notice('Sagittarius: chat history is empty — nothing to save yet.');
+      return;
+    }
+
+    const now = Date.now();
+    const rendered = renderChatNote(history, {
+      // Approximate `startedAt` as 1 minute before now per turn,
+      // since ChatView doesn't track session start time in MVP.
+      // v1.6.x can track this precisely once ChatView exposes it.
+      startedAt: now - history.length * 60_000,
+      endedAt: now,
+      mode: 'chat',
+    });
+
+    const path = chatNotePathFor(
+      new Date(now),
+      this.settings.budgetResetTimezone,
+      rendered.slug,
+    );
+
+    // Suffix on collision — operator saved twice in the same day with
+    // the same first message (rare, but defended).
+    const adapter = new VaultAdapterImpl(this.app);
+    let finalPath = path;
+    let attempt = 2;
+    while (await adapter.exists(finalPath)) {
+      finalPath = chatPathWithSuffix(path, attempt);
+      attempt += 1;
+      if (attempt > 20) {
+        new Notice('Sagittarius: too many collisions — pick a different first message.');
+        return;
+      }
+    }
+
+    await this.activateChatView();
+    try {
+      await bundle.deps.tools.execute('create_note', {
+        path: finalPath,
+        content: rendered.content,
+      });
+      new Notice('Sagittarius: chat-note proposal sent to the chat panel — review and accept.');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      new Notice(`Sagittarius: save failed — ${msg}`);
+    }
+  }
+
   private async runJournalSession(): Promise<void> {
     if (!this.settings.journalEnabled) {
       new Notice(
