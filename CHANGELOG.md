@@ -4,6 +4,19 @@ Versioning is semver-ish: minor bumps signal new user-facing capability,
 patch bumps are polish + bug fixes within a phase. Each phase has a plan
 ADR (numbered) and a close ADR (retrospective) — see `docs/`.
 
+## [1.6.0] — 2026-05-16 (Phase 13 MVP — Conversational notes — ADR-034)
+
+- **`Sagittarius: Save this conversation as a note`** — new command. Reads ChatView history (Phase 12 substrate), renders a Q&A markdown note with H2 headers per turn, proposes `create_note('_chats/<YYYY-MM-DD>/<slug>.md', content)` via the existing diff card.
+- Citations in assistant turns stay as `[[]]` wikilinks; Obsidian's metadata cache builds backlinks automatically — chat note becomes a hub for the conversation's source material.
+- Frontmatter: `type: chat` + `session_id` + dates + `mode` + `turn_count` + optional tokens/cost + `cited_chunks` mirroring drafting (citation-drift verifier reuses for free).
+- Collision handling: if today's slug already exists, `chatPathWithSuffix` adds `-2`, `-3` etc.
+- New `src/chats/paths.ts` (pure helpers): `slugifyChat`, `chatNotePathFor`, `isChatNotePath`, `chatPathWithSuffix`.
+- New `src/chats/ChatNoteWriter.ts`: `renderChatNote` pure renderer; extracts cited paths from inline wikilinks.
+- 1 new setting: `chatNotesEnabled` (opt-in, default false per ADR-034 D7).
+- **Zero new write tools** — composes existing `create_note` per ADR-016 D2 + ADR-028 lesson 2 (six phases of this discipline now).
+- v1.6.x slots: ChatView header button (v1.6.1), per-conversation opt-out toggle (v1.6.1), auto-save options, chat-notes side panel, "Replay this conversation" command.
+- Tests: +22 (1140 total).
+
 ## [1.5.0] — 2026-05-15 (Phase 12 MVP — Reverse-memory journal — ADR-033)
 
 - **`Sagittarius: Journal this session`** — new command. Agent reads recent ChatView history, summarizes into a four-bullet H2 entry (Worked on / Decided / Learned about operator / Open threads), proposes `append_to_note('_memory/<YYYY-MM-DD>.md', entry)` via the existing diff card.
