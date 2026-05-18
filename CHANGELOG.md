@@ -4,6 +4,36 @@ Versioning is semver-ish: minor bumps signal new user-facing capability,
 patch bumps are polish + bug fixes within a phase. Each phase has a plan
 ADR (numbered) and a close ADR (retrospective) — see `docs/`.
 
+## [2.0.0] — 2026-05-18 (Phase 16 session 3 / MVP complete — time-travel GC + integration tests + perf smoke — ADR-037)
+
+**Major bump.** Phase 16 closes the ADR-031 roadmap. Five "holy-shit moves" (12 → 16) shipped in 4 days; Phase 16 is the v2.0 architectural pivot per ADR-031 D1.
+
+- **Snapshot GC** per ADR-037 D4. Background task on plugin load (throttled to once per 24h via `shouldRunGc` + new `timeTravelLastGcAt` setting). Three retention buckets:
+  - Tagged snapshots — kept indefinitely
+  - Pinned snapshots — kept indefinitely (v2.0.5 follow-up `Sagittarius: Pin snapshot` command will mutate `pinned: true`)
+  - Untagged + unpinned snapshots — expire after `timeTravelRetentionDays` (default 365)
+  Pure `partitionExpiredSnapshots(snaps, now, days)` returns the keep/expire split; main.ts calls `engine.deleteChunksForCommit` for each expired, removes from settings, flushes the index. Silent on failure (plugin load must not be blocked by retention bookkeeping).
+- **Integration tests for time-travel chat loop**: 7 tests covering system-prompt addendum (date + sha + tag + citation suffix instructions), pre-retrieval scoping to snapshot SHA, mode logging, graceful degradation when retrieval is unavailable.
+- **Performance smoke** on a populated index: 200 notes × 10 chunks × 3 snapshots + current state = 8000 rows. Validates the schema rebuild + partial unique indexes hold under realistic scale; `listSnapshotShas`, `allChunks({ commitSha })`, `deleteChunksForCommit`, and the export/reopen round-trip all stay correct.
+- 1 new setting: `timeTravelLastGcAt: number` (epoch ms; 0 = never).
+- 19 new tests (1243 total).
+
+**Phase 16 closes the ADR-031 roadmap.** All five holy-shit moves shipped:
+- Phase 12 — reverse-memory journal (v1.5.0)
+- Phase 13 — conversational notes (v1.6.0)
+- Phase 14 — daily briefing (v1.7.0)
+- Phase 15 — negotiation mode (v1.8.0)
+- Phase 16 — time-travel queries (v2.0.0)
+
+v2.0.x follow-up slots named per ADR-037 D10:
+- v2.0.1 — auto-snapshot on git-tag push (vault file-watcher on `.git/refs/tags`)
+- v2.0.2 — `timeTravelDailySnapshot` setting for unattended coverage
+- v2.0.3 — "Preview historical content" modal
+- v2.0.4 — "Diff between snapshots" command
+- v2.0.5 — `Sagittarius: Pin snapshot` command
+
+Phase 16 close ADR follows after the operator has used time-travel for ~10 distinct queries across ~2 weeks.
+
 ## [1.10.0] — 2026-05-18 (Phase 16 session 2 — time-travel mode & snapshot indexing — ADR-037)
 
 - **`Sagittarius: Snapshot vault for time-travel`** now actually snapshots — runs `SnapshotIndexer` over current vault state and writes chunks with `commit_sha = <HEAD>`. Idempotent (skips when the SHA already has chunks); persists `SnapshotMeta` to settings; persists the index buffer via the new `IndexCoordinator.flushNow()`; surfaces a Notice with the note + chunk counts. Auto-detects git tag pointing at HEAD via `resolveTagForCommit` (packed-refs lightweight + annotated) and records it on the snapshot.
