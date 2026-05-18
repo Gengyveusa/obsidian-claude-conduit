@@ -102,11 +102,18 @@ import { verifyCitations, type CitationDriftReport } from './drafts/citationDrif
 import { AnthropicDraftingEngine, draftToFileContent } from './drafts/DraftingEngine';
 import { DraftStore } from './drafts/DraftStore';
 import { promotedPathFor } from './drafts/paths';
+import {
+  composeBriefing,
+  type BriefingData,
+} from './briefing/BriefingComposer';
+import { extractOpenThreads } from './briefing/journalThreads';
+import { BRIEFINGS_ROOT, briefingPathFor } from './briefing/paths';
 import { renderChatNote } from './chats/ChatNoteWriter';
 import { chatNotePathFor, chatPathWithSuffix } from './chats/paths';
 import { AnthropicJournalGenerator, type JournalGenerationResult } from './memory/JournalGenerator';
 import { journalPathFor } from './memory/journal';
 import { LiveMemoryProvider } from './memory/LiveMemoryProvider';
+import type { CascadeResult } from './memory/MemoryCascade';
 import { CallbackApprovalGate } from './writes/CallbackApprovalGate';
 import { ExternalProposalQueue } from './writes/ExternalProposalQueue';
 import { JsonTransactionLog } from './writes/TransactionLog';
@@ -542,6 +549,15 @@ export default class SagittariusPlugin extends Plugin {
       },
     });
 
+    // Phase 14 (v1.7.0) — daily briefing per ADR-035 D2.
+    this.addCommand({
+      id: 'generate-briefing',
+      name: "Generate today's briefing",
+      callback: () => {
+        void this.runGenerateBriefing();
+      },
+    });
+
     try {
       await this.initializeIndexing();
     } catch (err) {
@@ -555,6 +571,12 @@ export default class SagittariusPlugin extends Plugin {
       `[sagittarius] ${PLUGIN_NAME} v${this.manifest.version} loaded. ` +
         `Retrieval: ${this.settings.huggingfaceApiKey.length > 0 ? 'enabled (HF Inference API)' : 'disabled (no HF token set)'}.`,
     );
+
+    // Phase 14 (v1.7.0) — first-launch-of-day briefing check per
+    // ADR-035 D2. Background — must not block onload.
+    setTimeout(() => {
+      void this.maybeFireDailyBriefing();
+    }, 0);
 
     if (this.settings.indexingMode === 'auto' && this.embedClient) {
       // Background — never block plugin onload.
@@ -871,6 +893,218 @@ export default class SagittariusPlugin extends Plugin {
    * Operator-triggered MVP — auto-save options ship in v1.6.1 per
    * D10's named slot.
    */
+
+  /**
+   * Phase 14 (v1.7.0) — first-launch-of-day scheduler per ADR-035 D2.
+   * Called from `onload` after settings + agent bundle are ready.
+   * Fires `runGenerateBriefing` only when:
+   *   - `briefingEnabled` is on,
+   *   - today's local date differs from `briefingLastDay`,
+   *   - today's briefing file doesn't already exist.
+   *
+   * Idempotent: subsequent restarts on the same day skip silently.
+   */
+  private async maybeFireDailyBriefing(): Promise<void> {
+    if (!this.settings.briefingEnabled) {
+      return;
+    }
+    const today = new Date().toLocaleDateString('en-CA', {
+      timeZone: this.settings.budgetResetTimezone,
+    });
+    if (this.settings.briefingLastDay === today) {
+      return; // already fired today
+    }
+    const adapter = new VaultAdapterImpl(this.app);
+    const todayPath = briefingPathFor(new Date(), this.settings.budgetResetTimezone);
+    if (await adapter.exists(todayPath)) {
+      // File already on disk (operator may have run the command, or
+      // a prior install fired it). Mark the day as done so we don't
+      // pester again on restart, but don't re-fire.
+      this.settings.briefingLastDay = today;
+      await this.saveSettings();
+      return;
+    }
+    void this.runGenerateBriefing({ auto: true });
+  }
+
+  /**
+   * Phase 14 (v1.7.0) — `Sagittarius: Generate today's briefing` per
+   * ADR-035 D2 + D5. Aggregates curator + activity + drafts +
+   * synthesis suggestions + memory state + open threads from journals
+   * into one markdown digest; proposes `create_note` via the diff
+   * card per D8.
+   *
+   * Operator-triggered overrides the daily idempotency check; the
+   * scheduler path (`auto: true`) honors it.
+   */
+  private async runGenerateBriefing(opts: { auto?: boolean } = {}): Promise<void> {
+    if (!this.settings.briefingEnabled) {
+      new Notice(
+        'Sagittarius: daily briefing is off. Enable it in Settings → Sagittarius → Briefing before running this command.',
+      );
+      return;
+    }
+    const bundle = await this.getAgentBundle();
+    if (bundle === null) {
+      if (!opts.auto) {
+        new Notice('Sagittarius: set your Anthropic API key in Settings → Sagittarius first.');
+      }
+      return;
+    }
+
+    const adapter = new VaultAdapterImpl(this.app);
+    const now = new Date();
+    const todayPath = briefingPathFor(now, this.settings.budgetResetTimezone);
+    const todayLabel = todayPath
+      .slice(BRIEFINGS_ROOT.length)
+      .replace(/\.md$/, '');
+
+    // Skip overwrites — MVP per the simpler-than-archive cut. If
+    // operator wants a fresh briefing, they delete the file.
+    if (await adapter.exists(todayPath)) {
+      if (opts.auto) {
+        // Scheduler path: silent + mark the day done.
+        this.settings.briefingLastDay = todayLabel;
+        await this.saveSettings();
+        return;
+      }
+      new Notice(
+        `Sagittarius: today's briefing already exists at \`${todayPath}\`. Delete it to regenerate.`,
+      );
+      return;
+    }
+
+    const notice = new Notice('Sagittarius: composing briefing…', 0);
+    try {
+      const data = await this.gatherBriefingData(adapter, todayLabel);
+      const composeResult = composeBriefing(data, {
+        editorialText: null, // editorial summary deferred to v1.7.1
+        maxItemsPerSection: this.settings.briefingMaxItemsPerSection,
+      });
+      await this.activateChatView();
+      await bundle.deps.tools.execute('create_note', {
+        path: todayPath,
+        content: composeResult.content,
+      });
+      this.settings.briefingLastDay = todayLabel;
+      await this.saveSettings();
+      notice.hide();
+      new Notice(
+        `Sagittarius: briefing proposal sent to the chat panel — ${composeResult.itemCounts.total} item(s).`,
+      );
+    } catch (err) {
+      notice.hide();
+      const msg = err instanceof Error ? err.message : String(err);
+      new Notice(`Sagittarius: briefing generation failed — ${msg}`);
+    }
+  }
+
+  /**
+   * Gather every input the BriefingComposer needs in one place. Pure
+   * orchestration — each subsystem is read defensively (failures
+   * downgrade to empty data rather than aborting the whole briefing).
+   */
+  private async gatherBriefingData(
+    adapter: VaultAdapterImpl,
+    todayLabel: string,
+  ): Promise<BriefingData> {
+    const yesterdayMs = Date.now() - 24 * 60 * 60 * 1000;
+
+    // Activity yesterday.
+    const activityYesterday = this.activityLog
+      ? await this.activityLog.list({ sinceMs: yesterdayMs }).catch(() => [])
+      : [];
+
+    // Curator findings.
+    let curatorFindings: CuratorFinding[] = [];
+    if (this.settings.curatorEnabled && this.suggestionQueue !== null) {
+      try {
+        const cache = new MetadataCacheImpl(this.app);
+        const corpus = new VaultCorpus(adapter, cache);
+        const orchestrator = new CuratorOrchestrator({ corpus });
+        const rules = this.settings.curatorEnabledRules;
+        if (rules['broken-link'] !== false) {
+          orchestrator.register(makeBrokenLinkRule());
+        }
+        const outcome = await orchestrator.run({
+          maxPerSweep: this.settings.briefingMaxItemsPerSection,
+        });
+        curatorFindings = outcome.enqueued;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[sagittarius] briefing: curator scan failed: ${msg}`);
+      }
+    }
+
+    // Draft backlog.
+    const draftBacklog =
+      this.draftStore !== null
+        ? await this.draftStore.list().catch(() => [])
+        : [];
+
+    // Synthesis opportunities — DraftSuggestionRule.
+    let synthesisOpportunities: CuratorFinding[] = [];
+    try {
+      const cache = new MetadataCacheImpl(this.app);
+      const corpus = new VaultCorpus(adapter, cache);
+      const rule = makeDraftSuggestionRule({
+        minNotes: this.settings.draftSuggestionMinNotes,
+      });
+      synthesisOpportunities = await rule.detect(corpus);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[sagittarius] briefing: synthesis scan failed: ${msg}`);
+    }
+
+    // Memory state.
+    let memoryCascade: CascadeResult | null = null;
+    let recentJournalPaths: string[] = [];
+    if (this.memoryProvider !== null && this.settings.memoryEnabled) {
+      try {
+        memoryCascade = await this.memoryProvider.preview();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[sagittarius] briefing: memory preview failed: ${msg}`);
+      }
+    }
+    if (this.settings.journalEnabled) {
+      try {
+        const { listRecentJournals } = await import('./memory/journal');
+        recentJournalPaths = await listRecentJournals(
+          adapter,
+          this.settings.journalCascadeDays,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[sagittarius] briefing: journal list failed: ${msg}`);
+      }
+    }
+
+    // Open threads — from recent journals.
+    let openThreads: string[] = [];
+    if (this.settings.journalEnabled) {
+      try {
+        openThreads = await extractOpenThreads(
+          adapter,
+          this.settings.journalCascadeDays,
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[sagittarius] briefing: open threads scan failed: ${msg}`);
+      }
+    }
+
+    return {
+      date: todayLabel,
+      activityYesterday,
+      curatorFindings,
+      draftBacklog,
+      synthesisOpportunities,
+      memoryState: { cascade: memoryCascade, recentJournalPaths },
+      openThreads,
+    };
+  }
+
   private async runSaveConversation(): Promise<void> {
     if (!this.settings.chatNotesEnabled) {
       new Notice(
