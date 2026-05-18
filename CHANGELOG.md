@@ -4,6 +4,16 @@ Versioning is semver-ish: minor bumps signal new user-facing capability,
 patch bumps are polish + bug fixes within a phase. Each phase has a plan
 ADR (numbered) and a close ADR (retrospective) — see `docs/`.
 
+## [1.8.0] — 2026-05-18 (Phase 15 MVP — Negotiation mode — ADR-036)
+
+- **New chat mode `Negotiate`** joins `Chat` and `Vault QA` in the ChatView dropdown. When selected, agent flips to adversarial posture: finds the strongest counter-evidence to the operator's thesis from their own vault notes.
+- **System prompt addendum** explicitly forbids softening and sycophancy; mandates `[[note-path]]` citations for every counter; honest fallback when the vault contains no counter-evidence ("the thesis may be uncontested in your written record — which is itself worth noting").
+- **Pre-retrieval fires** for negotiate mode just like vault-qa (per ADR-036 D6) — agent needs vault context as raw material for the counter-search.
+- **⚔ banner** above messages area signals adversarial posture is active.
+- Zero new write tools, zero new settings. Negotiate is transient ChatView state per ADR-036 D8.
+- **Eighth phase of "zero new write tools" in a row.**
+- Tests: +6 (1178 total).
+
 ## [1.7.0] — 2026-05-18 (Phase 14 MVP — Daily briefing — ADR-035)
 
 - **`Sagittarius: Generate today's briefing`** — new command. Aggregates curator + activity + drafts + synthesis opportunities + memory state + journal "open threads" into one scannable digest written to `_briefings/<YYYY-MM-DD>.md` via the existing diff card.

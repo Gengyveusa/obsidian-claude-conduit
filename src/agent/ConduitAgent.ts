@@ -145,7 +145,7 @@ export class ConduitAgent {
   async chat(
     userMessage: string,
     history: MessageParam[],
-    mode: 'chat' | 'vault-qa',
+    mode: 'chat' | 'vault-qa' | 'negotiate',
     onToken?: (text: string) => void,
     draftPath?: string | null,
   ): Promise<TurnResult> {
@@ -293,9 +293,12 @@ export class ConduitAgent {
 
   private async preRetrieve(
     query: string,
-    mode: 'chat' | 'vault-qa',
+    mode: 'chat' | 'vault-qa' | 'negotiate',
   ): Promise<ConversationCitation[]> {
-    if (mode !== 'vault-qa' || !this.deps.retrieval) {
+    // Phase 15 (v1.8.0) — negotiate mode fires pre-retrieval just
+    // like vault-qa per ADR-036 D6: the agent needs vault context as
+    // raw material for the counter-evidence search.
+    if ((mode !== 'vault-qa' && mode !== 'negotiate') || !this.deps.retrieval) {
       return [];
     }
     const hits = await this.deps.retrieval.queryUnified({
@@ -389,14 +392,40 @@ export class ConduitAgent {
    */
   private buildSystemPrompt(
     retrieved: ConversationCitation[],
-    mode: 'chat' | 'vault-qa',
+    mode: 'chat' | 'vault-qa' | 'negotiate',
     memory: string | null,
     draftPath: string | null,
   ): TextBlockParam[] {
-    const modeAddendum =
-      mode === 'vault-qa'
-        ? 'Mode: VAULT QA. Every answer must cite at least one note from search_vault results.'
-        : "Mode: CHAT. Cite when you use tools; don't over-cite for general knowledge.";
+    // Phase 15 (v1.8.0) — third mode 'negotiate' per ADR-036 D2:
+    // adversarial posture, cite every counter, no softening.
+    const modeAddendum = (() => {
+      if (mode === 'vault-qa') {
+        return 'Mode: VAULT QA. Every answer must cite at least one note from search_vault results.';
+      }
+      if (mode === 'negotiate') {
+        return [
+          'Mode: NEGOTIATE. Your role this turn is to find the STRONGEST',
+          "counter-evidence to the operator's stated position, drawn from",
+          'their own vault notes.',
+          '',
+          "- Read the operator's thesis from their first message (or restated",
+          '  thesis on later turns).',
+          '- Use search_vault aggressively to find notes that contradict,',
+          '  complicate, or undermine the thesis.',
+          '- Cite every counter with [[note-path]] wikilinks. Counters',
+          '  without citations are speculation — skip them.',
+          '- Be direct. "Your past note X argues Y, which contradicts Z."',
+          '  Not "you might want to consider..."',
+          '- Refuse to flatter. Refuse to soften. The operator chose this',
+          '  mode specifically to be challenged.',
+          "- If you can't find counter-evidence in the vault, say so:",
+          '  "I searched for X / Y / Z and found nothing in your vault that',
+          '  contradicts this. The thesis may be uncontested in your',
+          '  written record (which is itself worth noting)."',
+        ].join('\n');
+      }
+      return "Mode: CHAT. Cite when you use tools; don't over-cite for general knowledge.";
+    })();
 
     const toolsHelp = this.toolsHelpText();
 

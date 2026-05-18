@@ -1,7 +1,7 @@
 ---
 title: "ADR-036: Phase 15 plan — Negotiation mode (v1.8.0)"
 type: decision
-status: "Proposed (D1-D10 await batch acceptance)"
+status: "Accepted (D1-D10 batch-accepted 2026-05-18)"
 date: 2026-05-18
 ---
 

@@ -653,3 +653,13 @@
   font-size: 0.8em;
   padding: 0.15em 0.5em;
 }
+
+/* Phase 15 (v1.8.0) — Negotiation-mode banner per ADR-036 D4. */
+.sagittarius-negotiate-banner {
+  margin: 0.4em 0.8em 0;
+  padding: 0.4em 0.6em;
+  background: var(--background-modifier-error-rgb, var(--background-secondary));
+  border-left: 3px solid var(--text-error);
+  border-radius: 3px;
+  font-size: 0.85em;
+}

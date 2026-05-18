@@ -31,13 +31,15 @@ export class ChatView extends ItemView {
     return [...this.history];
   }
 
-  private mode: 'chat' | 'vault-qa' = 'chat';
+  private mode: 'chat' | 'vault-qa' | 'negotiate' = 'chat';
   private messagesEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private sendButton!: HTMLButtonElement;
   private statusEl!: HTMLElement;
   /** Phase 8 (v1.3.2) — draft-mode banner above the messages area. */
   private draftBannerEl?: HTMLElement;
+  /** Phase 15 (v1.8.0) — negotiation-mode banner above messages area. */
+  private negotiateBannerEl?: HTMLElement;
   private busy = false;
 
   constructor(
@@ -64,6 +66,8 @@ export class ChatView extends ItemView {
     const root = this.containerEl.createDiv({ cls: 'sagittarius-chat' });
 
     this.renderHeader(root);
+    this.negotiateBannerEl = root.createDiv({ cls: 'sagittarius-negotiate-banner' });
+    this.refreshNegotiateBanner();
     this.draftBannerEl = root.createDiv({ cls: 'sagittarius-draft-banner' });
     this.refreshDraftBanner();
     this.messagesEl = root.createDiv({ cls: 'sagittarius-messages' });
@@ -195,17 +199,55 @@ export class ChatView extends ItemView {
       value: 'vault-qa',
       text: 'Vault QA',
     });
-    // vault-qa requires retrieval to be initialized (HF token set);
-    // gracefully disable when not, like v0.1.1.
+    // Phase 15 (v1.8.0) — third mode per ADR-036 D1 + D9.
+    // Negotiate also requires retrieval (the agent needs vault
+    // context to find counter-evidence); same disable logic as
+    // vault-qa.
+    const negotiateOption = select.createEl('option', {
+      value: 'negotiate',
+      text: 'Negotiate',
+    });
+    // vault-qa + negotiate require retrieval to be initialized (HF
+    // token set); gracefully disable when not, like v0.1.1.
     if (!this.plugin.hasRetrieval()) {
       vaultQaOption.disabled = true;
       vaultQaOption.text = 'Vault QA (set HuggingFace token)';
+      negotiateOption.disabled = true;
+      negotiateOption.text = 'Negotiate (set HuggingFace token)';
     }
     select.value = this.mode;
     select.addEventListener('change', () => {
-      if (select.value === 'chat' || select.value === 'vault-qa') {
+      if (
+        select.value === 'chat' ||
+        select.value === 'vault-qa' ||
+        select.value === 'negotiate'
+      ) {
         this.mode = select.value;
+        this.refreshNegotiateBanner();
       }
+    });
+  }
+
+  /**
+   * Phase 15 (v1.8.0) — negotiation-mode banner per ADR-036 D4.
+   * Visible affordance so the operator always knows when the agent
+   * has switched to adversarial posture. Mirrors the draft-refine
+   * banner from Phase 8 (ADR-026 D5(d)).
+   */
+  private refreshNegotiateBanner(): void {
+    if (this.negotiateBannerEl === undefined) {
+      return;
+    }
+    this.negotiateBannerEl.empty();
+    if (this.mode !== 'negotiate') {
+      this.negotiateBannerEl.style.display = 'none';
+      return;
+    }
+    this.negotiateBannerEl.style.display = '';
+    this.negotiateBannerEl.createSpan({
+      text:
+        '⚔ Negotiation mode — agent is arguing against your stated position using your own vault. ' +
+        'Switch mode in the dropdown to exit.',
     });
   }
 
