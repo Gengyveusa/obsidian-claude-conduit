@@ -349,6 +349,26 @@ export interface SagittariusSettings {
    */
   briefingLastDay: string;
 
+  // Phase 16 (v2.0) — time-travel queries per ADR-037
+  /**
+   * Master switch for time-travel features per ADR-037 D1. Opt-in
+   * (default false). When off, the snapshot command surfaces a
+   * one-time Notice with the enable-it path and the time-travel
+   * mode is hidden from the ChatView dropdown.
+   *
+   * The schema migration (commit_sha column on chunks) runs
+   * unconditionally — adds storage cost of effectively zero on
+   * installs that never opt in (existing chunks keep commit_sha
+   * NULL).
+   */
+  timeTravelEnabled: boolean;
+  /**
+   * Per ADR-037 D4 — retention policy for manual (untagged)
+   * snapshots. Default 365 days. Tagged commits + pinned snapshots
+   * are kept indefinitely regardless of this setting.
+   */
+  timeTravelRetentionDays: number;
+
   // Phase 9.x (v1.4.0) — proactive draft suggestions per ADR-026 D8(b)
   /**
    * Minimum tag-cluster size before `Sagittarius: Suggest drafts`
@@ -464,6 +484,9 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
   briefingEnabled: false,
   briefingMaxItemsPerSection: 10,
   briefingLastDay: '',
+
+  timeTravelEnabled: false,
+  timeTravelRetentionDays: 365,
 
   draftSuggestionMinNotes: 5,
 
