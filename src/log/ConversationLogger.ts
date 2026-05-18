@@ -6,7 +6,7 @@ import type { VaultAdapter } from '../agent/types';
 export interface ConversationTurn {
   userMessage: string;
   assistantMessage: string;
-  mode: 'chat' | 'vault-qa' | 'negotiate';
+  mode: 'chat' | 'vault-qa' | 'negotiate' | 'time-travel';
   model: string;
   tokensIn: number;
   tokensOut: number;

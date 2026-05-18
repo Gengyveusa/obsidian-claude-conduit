@@ -73,7 +73,7 @@ export class SqliteEngine {
         chunk_index INTEGER NOT NULL,
         text TEXT NOT NULL,
         embedding BLOB NOT NULL,
-        UNIQUE(note_path, chunk_index)
+        commit_sha TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_path ON chunks(note_path);
 
@@ -92,19 +92,22 @@ export class SqliteEngine {
       );
     `);
 
-    // Phase 16 (v2.0) — time-travel snapshots per ADR-037 D2 + D5.
-    // Add the commit_sha column to chunks if it's not already there
-    // (ALTER TABLE ADD COLUMN is sqlite-supported and idempotent via
-    // PRAGMA introspection). NULL commit_sha = current-state chunk
-    // (back-compat with v1.x installs).
+    // Phase 16 (v1.9.0+) — time-travel snapshots per ADR-037 D2 + D5.
+    // Two-step migration:
+    //  1. Ensure the `commit_sha` column exists (session 1, v1.9.0).
+    //  2. If the chunks table still carries the legacy
+    //     `UNIQUE(note_path, chunk_index)` constraint, recreate it
+    //     without that constraint and replace with two PARTIAL UNIQUE
+    //     indexes (one for current-state rows, one for snapshots)
+    //     so a path+index pair can coexist across snapshots without
+    //     collision (session 2, v1.10.0).
     //
-    // SCHEMA_VERSION stays at '1' deliberately: the column is nullable
-    // + ignored by existing readers, so this is a non-breaking
-    // additive change. Pre-Phase-16 plugin versions reading a
-    // post-Phase-16 DB will see chunks normally and ignore the new
-    // column. Bumping SCHEMA_VERSION here would force a rebuild on
-    // every existing install — not warranted.
+    // SCHEMA_VERSION stays at '1' deliberately: rows readable by
+    // pre-Phase-16 plugin versions stay readable (the new column is
+    // nullable and ignored by old readers). Bumping SCHEMA_VERSION
+    // would force a rebuild on every existing install — not warranted.
     this.maybeAddCommitShaColumn();
+    this.maybeRebuildChunksTableForSnapshots();
 
     const stmt = this.db.prepare(
       'INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)',
@@ -126,7 +129,7 @@ export class SqliteEngine {
   }
 
   /**
-   * Phase 16 (v2.0) — idempotent `commit_sha` column add per ADR-037 D5.
+   * Phase 16 (v1.9.0) — idempotent `commit_sha` column add per ADR-037 D5.
    * Checks `PRAGMA table_info(chunks)` for the column; ALTERs if
    * missing. Also creates the supporting index. Safe to call on
    * brand-new DBs and existing v1.x DBs alike.
@@ -142,6 +145,68 @@ export class SqliteEngine {
     this.db.exec(`
       ALTER TABLE chunks ADD COLUMN commit_sha TEXT;
       CREATE INDEX IF NOT EXISTS idx_chunks_commit_sha ON chunks(commit_sha);
+    `);
+  }
+
+  /**
+   * Phase 16 (v1.10.0) — rebuild the legacy chunks table to drop the
+   * `UNIQUE(note_path, chunk_index)` constraint per ADR-037 D2. The
+   * new shape relies on two partial unique indexes:
+   *
+   *   - `idx_chunks_current`  — UNIQUE(note_path, chunk_index) WHERE commit_sha IS NULL
+   *   - `idx_chunks_snapshot` — UNIQUE(note_path, chunk_index, commit_sha) WHERE commit_sha IS NOT NULL
+   *
+   * This lets a current-state row (`commit_sha=NULL`) and any number
+   * of historical snapshots (`commit_sha=<sha>`) coexist for the
+   * same path + chunk-index without collision.
+   *
+   * Detection: the absence of `idx_chunks_current` indicates legacy
+   * schema. Recreates the table via CREATE-INSERT-DROP-RENAME in a
+   * single transaction; safe on populated indexes (the existing rows
+   * preserve their `commit_sha=NULL` from session 1's column add).
+   *
+   * No-op on fresh installs (the initial `CREATE TABLE IF NOT EXISTS`
+   * above uses the new schema). No-op on already-migrated installs
+   * (the index is already present).
+   */
+  private maybeRebuildChunksTableForSnapshots(): void {
+    const partials = this.db.exec(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_chunks_current'",
+    );
+    if ((partials[0]?.values.length ?? 0) > 0) {
+      // Partial indexes already exist — migration done.
+      // Still ensure the helper indexes are present (defensive on
+      // hand-edited DBs).
+      this.db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_chunks_commit_sha ON chunks(commit_sha);
+        CREATE INDEX IF NOT EXISTS idx_path ON chunks(note_path);
+      `);
+      return;
+    }
+
+    // Legacy schema present (UNIQUE(note_path, chunk_index) in the
+    // CREATE TABLE clause). Recreate without that constraint.
+    this.db.exec(`
+      BEGIN;
+      CREATE TABLE chunks_new (
+        id INTEGER PRIMARY KEY,
+        note_path TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        text TEXT NOT NULL,
+        embedding BLOB NOT NULL,
+        commit_sha TEXT
+      );
+      INSERT INTO chunks_new (id, note_path, chunk_index, text, embedding, commit_sha)
+        SELECT id, note_path, chunk_index, text, embedding, commit_sha FROM chunks;
+      DROP TABLE chunks;
+      ALTER TABLE chunks_new RENAME TO chunks;
+      CREATE UNIQUE INDEX idx_chunks_current
+        ON chunks(note_path, chunk_index) WHERE commit_sha IS NULL;
+      CREATE UNIQUE INDEX idx_chunks_snapshot
+        ON chunks(note_path, chunk_index, commit_sha) WHERE commit_sha IS NOT NULL;
+      CREATE INDEX idx_chunks_commit_sha ON chunks(commit_sha);
+      CREATE INDEX idx_path ON chunks(note_path);
+      COMMIT;
     `);
   }
 
@@ -182,7 +247,21 @@ export class SqliteEngine {
 
   /**
    * Insert or replace a chunk. Embedding must be exactly VECTOR_DIM floats.
+   *
+   * Phase 16 (v1.10.0) — `chunk.commitSha` selects which (current vs.
+   * historical) snapshot the row belongs to per ADR-037 D2. The
+   * (notePath, chunkIndex, commitSha) tuple is the natural key:
+   *
+   *   - `commitSha = null` (or omitted) → current-state index. Replaces
+   *     the existing current-state row for the same (notePath, chunkIndex)
+   *     pair if one exists.
+   *   - `commitSha = '<sha>'` → snapshot row. Replaces the existing
+   *     snapshot row for the same (notePath, chunkIndex, commitSha)
+   *     triple if one exists. Coexists with current-state + other
+   *     snapshots.
+   *
    * @example engine.upsertChunk({ notePath: 'a.md', chunkIndex: 0, text: '...', embedding: vec });
+   * @example engine.upsertChunk({ notePath: 'a.md', chunkIndex: 0, text: '...', embedding: vec, commitSha: 'abc123' });
    */
   upsertChunk(chunk: Chunk): void {
     if (chunk.embedding.length !== VECTOR_DIM) {
@@ -192,20 +271,49 @@ export class SqliteEngine {
       );
     }
     const blob = float32ToLeBytes(chunk.embedding);
+    const commitSha = chunk.commitSha ?? null;
+
+    // Delete-then-insert so we honor the (path, idx, sha) natural key
+    // without relying on the legacy UNIQUE(note_path, chunk_index)
+    // constraint (dropped by the Phase 16 migration). NULL semantics
+    // for commit_sha require an IS NULL branch since `= NULL` is
+    // never true in SQL.
+    if (commitSha === null) {
+      const del = this.db.prepare(
+        'DELETE FROM chunks WHERE note_path = ? AND chunk_index = ? AND commit_sha IS NULL',
+      );
+      del.run([chunk.notePath, chunk.chunkIndex]);
+      del.free();
+    } else {
+      const del = this.db.prepare(
+        'DELETE FROM chunks WHERE note_path = ? AND chunk_index = ? AND commit_sha = ?',
+      );
+      del.run([chunk.notePath, chunk.chunkIndex, commitSha]);
+      del.free();
+    }
+
     const stmt = this.db.prepare(
-      'INSERT OR REPLACE INTO chunks (note_path, chunk_index, text, embedding) VALUES (?, ?, ?, ?)',
+      'INSERT INTO chunks (note_path, chunk_index, text, embedding, commit_sha) VALUES (?, ?, ?, ?, ?)',
     );
-    stmt.run([chunk.notePath, chunk.chunkIndex, chunk.text, blob]);
+    stmt.run([chunk.notePath, chunk.chunkIndex, chunk.text, blob, commitSha]);
     stmt.free();
   }
 
   /**
    * Read a chunk by (notePath, chunkIndex). Returns null if not found.
+   *
+   * Phase 16 (v1.10.0) — reads CURRENT-STATE rows only (commit_sha IS
+   * NULL). Snapshot rows are queried via `allChunks({ commitSha: ... })`
+   * or `getChunkAtCommit`. This preserves back-compat with the
+   * pre-Phase-16 callers (indexer, drafting engine, etc.) that
+   * expect current-state semantics.
+   *
    * @example const c = engine.getChunk('a.md', 0);
    */
   getChunk(notePath: string, chunkIndex: number): Chunk | null {
     const stmt = this.db.prepare(
-      'SELECT note_path, chunk_index, text, embedding FROM chunks WHERE note_path = ? AND chunk_index = ?',
+      'SELECT note_path, chunk_index, text, embedding FROM chunks ' +
+        'WHERE note_path = ? AND chunk_index = ? AND commit_sha IS NULL',
     );
     stmt.bind([notePath, chunkIndex]);
     if (!stmt.step()) {
@@ -219,6 +327,7 @@ export class SqliteEngine {
       chunkIndex: row[1] as number,
       text: row[2] as string,
       embedding: leBytesToFloat32(row[3] as Uint8Array),
+      commitSha: null,
     };
   }
 
@@ -226,15 +335,39 @@ export class SqliteEngine {
    * Iterate all chunks, optionally filtered by a path prefix. Materializes
    * Chunk[] for v0.1 scale (target 30–40 K rows); streaming optimization is
    * a Phase 5 follow-up if vault sizes grow past the ADR-010 §5 perf gate.
+   *
+   * Phase 16 (v1.10.0) — pass `commitSha` to scope the query to a
+   * particular snapshot:
+   *
+   *   - `undefined` (default) → CURRENT-STATE only (`commit_sha IS NULL`).
+   *     Back-compat with every pre-Phase-16 caller.
+   *   - `null` → CURRENT-STATE only (same as `undefined`, explicit form).
+   *   - `'<sha>'` → that snapshot's rows only.
+   *
    * @example const all = engine.allChunks(); const fortressFlow = engine.allChunks({ pathPrefix: '50-FortressFlow/' });
+   * @example const february = engine.allChunks({ commitSha: 'abc123' });
    */
-  allChunks(filter?: { pathPrefix?: string }): Chunk[] {
-    const sql = filter?.pathPrefix
-      ? 'SELECT note_path, chunk_index, text, embedding FROM chunks WHERE note_path LIKE ? || "%" ORDER BY note_path, chunk_index'
-      : 'SELECT note_path, chunk_index, text, embedding FROM chunks ORDER BY note_path, chunk_index';
-    const stmt = this.db.prepare(sql);
+  allChunks(filter?: { pathPrefix?: string; commitSha?: string | null }): Chunk[] {
+    const commitSha = filter?.commitSha ?? null;
+    const commitClause =
+      commitSha === null ? 'commit_sha IS NULL' : 'commit_sha = ?';
+
+    const baseSql =
+      'SELECT note_path, chunk_index, text, embedding, commit_sha FROM chunks';
+    const where: string[] = [commitClause];
+    const params: Array<string> = [];
+    if (commitSha !== null) {
+      params.push(commitSha);
+    }
     if (filter?.pathPrefix) {
-      stmt.bind([filter.pathPrefix]);
+      where.push('note_path LIKE ? || \'%\'');
+      params.push(filter.pathPrefix);
+    }
+    const sql = `${baseSql} WHERE ${where.join(' AND ')} ORDER BY note_path, chunk_index`;
+
+    const stmt = this.db.prepare(sql);
+    if (params.length > 0) {
+      stmt.bind(params);
     }
     const out: Chunk[] = [];
     while (stmt.step()) {
@@ -244,10 +377,80 @@ export class SqliteEngine {
         chunkIndex: row[1] as number,
         text: row[2] as string,
         embedding: leBytesToFloat32(row[3] as Uint8Array),
+        commitSha: row[4] as string | null,
       });
     }
     stmt.free();
     return out;
+  }
+
+  /**
+   * Phase 16 (v1.10.0) — list the distinct commit SHAs of every
+   * snapshot present in the chunks table, with each one's row count.
+   * The current-state index (commit_sha IS NULL) is intentionally
+   * excluded; callers query it via the default `allChunks()` path.
+   *
+   * Used by the SnapshotPickerModal to populate the dropdown and by
+   * `deleteChunksForCommit` callers to confirm a snapshot exists
+   * before deleting.
+   *
+   * @example const snaps = engine.listSnapshotShas();
+   */
+  listSnapshotShas(): Array<{ commitSha: string; chunkCount: number }> {
+    const result = this.db.exec(
+      'SELECT commit_sha, COUNT(*) FROM chunks WHERE commit_sha IS NOT NULL ' +
+        'GROUP BY commit_sha ORDER BY commit_sha',
+    );
+    const rows = result[0]?.values ?? [];
+    return rows.map((row) => ({
+      commitSha: row[0] as string,
+      chunkCount: row[1] as number,
+    }));
+  }
+
+  /**
+   * Phase 16 (v1.10.0) — delete every chunk row associated with the
+   * given commit SHA. Used by the GC pass (session 3) to expire
+   * untagged snapshots past `timeTravelRetentionDays`. Idempotent;
+   * deleting a non-existent SHA is a no-op.
+   *
+   * Refuses to delete current-state rows: passing `null` is rejected
+   * (use `deleteChunksForPath` if you really mean to wipe current
+   * state for a path).
+   *
+   * @example engine.deleteChunksForCommit('abc123');
+   */
+  deleteChunksForCommit(commitSha: string): number {
+    if (commitSha.length === 0) {
+      throw new Error(
+        `SqliteEngine.deleteChunksForCommit: commitSha must be non-empty. ` +
+          `Use deleteChunksForPath() to wipe current-state rows for a path.`,
+      );
+    }
+    const before = this.countChunksAtCommit(commitSha);
+    const stmt = this.db.prepare('DELETE FROM chunks WHERE commit_sha = ?');
+    stmt.run([commitSha]);
+    stmt.free();
+    return before;
+  }
+
+  /**
+   * Phase 16 (v1.10.0) — count rows for a given snapshot. Used by
+   * `runSnapshotForTimeTravel` to short-circuit re-indexing when a
+   * snapshot for the same SHA already exists per ADR-037 D3
+   * idempotency.
+   *
+   * @example const n = engine.countChunksAtCommit('abc123');
+   */
+  countChunksAtCommit(commitSha: string): number {
+    const stmt = this.db.prepare(
+      'SELECT COUNT(*) FROM chunks WHERE commit_sha = ?',
+    );
+    stmt.bind([commitSha]);
+    stmt.step();
+    const row = stmt.get();
+    stmt.free();
+    return row[0] as number;
   }
 
   /**
@@ -264,11 +467,16 @@ export class SqliteEngine {
   }
 
   /**
-   * Count chunks belonging to a single note path.
+   * Count chunks belonging to a single note path in CURRENT-STATE
+   * (commit_sha IS NULL). Phase 16 (v1.10.0): historical snapshots
+   * are excluded; the Indexer's mtime-skip path is interested only in
+   * what's live.
    * @example const n = engine.countChunksForPath('a.md');
    */
   countChunksForPath(notePath: string): number {
-    const stmt = this.db.prepare('SELECT COUNT(*) FROM chunks WHERE note_path = ?');
+    const stmt = this.db.prepare(
+      'SELECT COUNT(*) FROM chunks WHERE note_path = ? AND commit_sha IS NULL',
+    );
     stmt.bind([notePath]);
     stmt.step();
     const row = stmt.get();
@@ -277,13 +485,17 @@ export class SqliteEngine {
   }
 
   /**
-   * Delete all chunks for a single note path. Used by the indexer to
-   * uphold the contract §4 invariant: a failed file ingest must not
-   * leave partial chunks.
+   * Delete all CURRENT-STATE chunks for a single note path. Used by
+   * the indexer to uphold the contract §4 invariant: a failed file
+   * ingest must not leave partial chunks. Phase 16 (v1.10.0) — leaves
+   * historical snapshot rows untouched per ADR-037 D2 (snapshots are
+   * immutable artifacts of past commits).
    * @example engine.deleteChunksForPath('a.md');
    */
   deleteChunksForPath(notePath: string): void {
-    const stmt = this.db.prepare('DELETE FROM chunks WHERE note_path = ?');
+    const stmt = this.db.prepare(
+      'DELETE FROM chunks WHERE note_path = ? AND commit_sha IS NULL',
+    );
     stmt.run([notePath]);
     stmt.free();
   }

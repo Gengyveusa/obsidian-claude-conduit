@@ -1,10 +1,15 @@
 import type { MessageParam } from '@anthropic-ai/sdk/resources/messages';
 import { ItemView, MarkdownRenderer, Notice, type WorkspaceLeaf } from 'obsidian';
 
-import type { TurnResult } from '../agent/ConduitAgent';
+import type { ActiveSnapshot, ChatMode, TurnResult } from '../agent/ConduitAgent';
 import { formatMemoryFooter } from '../memory/MemoryCascade';
 import type SagittariusPlugin from '../main';
+import type { SnapshotMeta } from '../timetravel/types';
 import type { Decision, Proposal, ProposalDiff } from '../writes/types';
+import { SnapshotPickerModal } from './SnapshotPickerModal';
+
+const TIME_TRAVEL_WRITE_BLOCK_REASON =
+  "Time-travel mode is read-only — you can't edit the past. Ask the operator to switch out of time-travel mode (using the Mode dropdown in the chat panel) before making changes.";
 
 export const CHAT_VIEW_TYPE = 'sagittarius-chat';
 
@@ -31,7 +36,22 @@ export class ChatView extends ItemView {
     return [...this.history];
   }
 
-  private mode: 'chat' | 'vault-qa' | 'negotiate' = 'chat';
+  private mode: ChatMode = 'chat';
+  /**
+   * Phase 16 (v1.10.0) — the snapshot the operator picked for
+   * time-travel mode, or null when not in time-travel. Captured on
+   * mode-dropdown selection via SnapshotPickerModal. Persists across
+   * messages within the same chat panel session; cleared when the
+   * operator switches to a non-time-travel mode.
+   */
+  private activeSnapshot: SnapshotMeta | null = null;
+  /**
+   * Phase 16 (v1.10.0) — the mode the operator was in before they
+   * picked time-travel. If they cancel the picker (or pick "Current"),
+   * we restore this rather than leaving the dropdown stuck.
+   */
+  private modeBeforeTimeTravel: ChatMode = 'chat';
+  private select!: HTMLSelectElement;
   private messagesEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private sendButton!: HTMLButtonElement;
@@ -40,6 +60,8 @@ export class ChatView extends ItemView {
   private draftBannerEl?: HTMLElement;
   /** Phase 15 (v1.8.0) — negotiation-mode banner above messages area. */
   private negotiateBannerEl?: HTMLElement;
+  /** Phase 16 (v1.10.0) — time-travel banner above messages area. */
+  private timeTravelBannerEl?: HTMLElement;
   private busy = false;
 
   constructor(
@@ -68,6 +90,8 @@ export class ChatView extends ItemView {
     this.renderHeader(root);
     this.negotiateBannerEl = root.createDiv({ cls: 'sagittarius-negotiate-banner' });
     this.refreshNegotiateBanner();
+    this.timeTravelBannerEl = root.createDiv({ cls: 'sagittarius-timetravel-banner' });
+    this.refreshTimeTravelBanner();
     this.draftBannerEl = root.createDiv({ cls: 'sagittarius-draft-banner' });
     this.refreshDraftBanner();
     this.messagesEl = root.createDiv({ cls: 'sagittarius-messages' });
@@ -93,6 +117,11 @@ export class ChatView extends ItemView {
 
   override onClose(): Promise<void> {
     this.plugin.approvalGate.set(null);
+    // Phase 16 (v1.10.0) — clear any lingering write-block when the
+    // chat view closes. Otherwise an MCP client or the next-opened
+    // ChatView would inherit a stale "no writes — time-travel mode"
+    // from a panel that's no longer rendering it.
+    this.plugin.clearTimeTravelWriteBlock();
     this.containerEl.empty();
     return Promise.resolve();
   }
@@ -194,6 +223,7 @@ export class ChatView extends ItemView {
     const modeRow = header.createDiv({ cls: 'sagittarius-mode-row' });
     modeRow.createEl('label', { text: 'Mode: ' });
     const select = modeRow.createEl('select');
+    this.select = select;
     select.createEl('option', { value: 'chat', text: 'Chat' });
     const vaultQaOption = select.createEl('option', {
       value: 'vault-qa',
@@ -207,24 +237,104 @@ export class ChatView extends ItemView {
       value: 'negotiate',
       text: 'Negotiate',
     });
-    // vault-qa + negotiate require retrieval to be initialized (HF
-    // token set); gracefully disable when not, like v0.1.1.
+    // Phase 16 (v1.10.0) — fourth mode per ADR-037 D6. Time-travel
+    // requires retrieval (it queries historical chunks via the same
+    // pipeline) AND the `timeTravelEnabled` master switch. Hidden
+    // entirely (not just disabled) per D1 when the master switch is
+    // off — operators who haven't opted in shouldn't even see it.
+    let timeTravelOption: HTMLOptionElement | null = null;
+    if (this.plugin.settings.timeTravelEnabled) {
+      timeTravelOption = select.createEl('option', {
+        value: 'time-travel',
+        text: 'Time-travel',
+      });
+    }
+    // vault-qa + negotiate + time-travel require retrieval to be
+    // initialized (HF token set); gracefully disable when not.
     if (!this.plugin.hasRetrieval()) {
       vaultQaOption.disabled = true;
       vaultQaOption.text = 'Vault QA (set HuggingFace token)';
       negotiateOption.disabled = true;
       negotiateOption.text = 'Negotiate (set HuggingFace token)';
+      if (timeTravelOption !== null) {
+        timeTravelOption.disabled = true;
+        timeTravelOption.text = 'Time-travel (set HuggingFace token)';
+      }
     }
     select.value = this.mode;
     select.addEventListener('change', () => {
-      if (
-        select.value === 'chat' ||
-        select.value === 'vault-qa' ||
-        select.value === 'negotiate'
-      ) {
-        this.mode = select.value;
+      this.handleModeChange(select.value);
+    });
+  }
+
+  /**
+   * Phase 16 (v1.10.0) — mode-dropdown handler. Routes to the snapshot
+   * picker when switching to time-travel, and tracks `activeSnapshot`
+   * + the write-block gate appropriately.
+   */
+  private handleModeChange(value: string): void {
+    if (value === 'time-travel') {
+      // Open the picker BEFORE flipping the active mode so a cancel
+      // can restore the previous selection cleanly.
+      const previous = this.mode;
+      this.modeBeforeTimeTravel = previous === 'time-travel' ? 'chat' : previous;
+      this.openSnapshotPicker();
+      return;
+    }
+    if (value !== 'chat' && value !== 'vault-qa' && value !== 'negotiate') {
+      return;
+    }
+    this.mode = value;
+    this.activeSnapshot = null;
+    this.plugin.clearTimeTravelWriteBlock();
+    this.refreshNegotiateBanner();
+    this.refreshTimeTravelBanner();
+  }
+
+  private openSnapshotPicker(): void {
+    const snapshots = this.plugin.settings.timeTravelSnapshots;
+    new SnapshotPickerModal(this.app, snapshots, (picked) => {
+      if (picked === null) {
+        // Cancel or "Current" — restore the previous mode rather than
+        // leaving the dropdown stuck on "time-travel".
+        this.mode = this.modeBeforeTimeTravel;
+        this.activeSnapshot = null;
+        this.plugin.clearTimeTravelWriteBlock();
+        this.select.value = this.mode;
         this.refreshNegotiateBanner();
+        this.refreshTimeTravelBanner();
+        return;
       }
+      this.mode = 'time-travel';
+      this.activeSnapshot = picked;
+      this.plugin.setTimeTravelWriteBlock(TIME_TRAVEL_WRITE_BLOCK_REASON);
+      this.refreshNegotiateBanner();
+      this.refreshTimeTravelBanner();
+    }).open();
+  }
+
+  /**
+   * Phase 16 (v1.10.0) — time-travel banner per ADR-037 D6. Always
+   * tells the operator which snapshot is active so they can't lose
+   * track of which era they're querying.
+   */
+  private refreshTimeTravelBanner(): void {
+    if (this.timeTravelBannerEl === undefined) {
+      return;
+    }
+    this.timeTravelBannerEl.empty();
+    if (this.mode !== 'time-travel' || this.activeSnapshot === null) {
+      this.timeTravelBannerEl.style.display = 'none';
+      return;
+    }
+    this.timeTravelBannerEl.style.display = '';
+    const snap = this.activeSnapshot;
+    const labelParts = [`as of ${snap.date}`, `\`${snap.commitSha.slice(0, 7)}\``];
+    if (snap.tag !== null) {
+      labelParts.push(`tag: ${snap.tag}`);
+    }
+    this.timeTravelBannerEl.createSpan({
+      text: `⏳ Time-travel mode — querying vault ${labelParts.join('  ·  ')}. Writes are blocked. Switch mode in the dropdown to exit.`,
     });
   }
 
@@ -318,12 +428,20 @@ export class ChatView extends ItemView {
       // it via patch_note. Detection is per-send so swapping files
       // mid-conversation reflects on the next message.
       const draftPath = this.activeDraftPath();
+      const activeSnapshot: ActiveSnapshot | null = this.activeSnapshot
+        ? {
+            commitSha: this.activeSnapshot.commitSha,
+            date: this.activeSnapshot.date,
+            tag: this.activeSnapshot.tag,
+          }
+        : null;
       const result = await agent.agent.chat(
         text,
         this.history,
         this.mode,
         undefined,
         draftPath,
+        activeSnapshot,
       );
       this.history.push({ role: 'user', content: text });
       this.history.push({ role: 'assistant', content: result.finalText });
