@@ -379,6 +379,13 @@ export interface SagittariusSettings {
    * the GC pass.
    */
   timeTravelSnapshots: SnapshotMeta[];
+  /**
+   * Phase 16 (v2.0.0) — last time the GC pass ran, epoch ms per
+   * ADR-037 D4. `0` = never. Used by `shouldRunGc` to throttle the
+   * sweep to once per 24h. Operator never sets this directly; the GC
+   * writes it after each successful pass.
+   */
+  timeTravelLastGcAt: number;
 
   // Phase 9.x (v1.4.0) — proactive draft suggestions per ADR-026 D8(b)
   /**
@@ -499,6 +506,7 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
   timeTravelEnabled: false,
   timeTravelRetentionDays: 365,
   timeTravelSnapshots: [],
+  timeTravelLastGcAt: 0,
 
   draftSuggestionMinNotes: 5,
 

@@ -114,6 +114,7 @@ import { AnthropicJournalGenerator, type JournalGenerationResult } from './memor
 import { journalPathFor } from './memory/journal';
 import { LiveMemoryProvider } from './memory/LiveMemoryProvider';
 import type { CascadeResult } from './memory/MemoryCascade';
+import { partitionExpiredSnapshots, shouldRunGc } from './timetravel/gc';
 import { readHeadSha, resolveTagForCommit, vaultHasGit } from './timetravel/git';
 import { SnapshotIndexer } from './timetravel/SnapshotIndexer';
 import type { SnapshotMeta } from './timetravel/types';
@@ -593,6 +594,12 @@ export default class SagittariusPlugin extends Plugin {
       void this.maybeFireDailyBriefing();
     }, 0);
 
+    // Phase 16 (v2.0.0) — time-travel snapshot GC per ADR-037 D4.
+    // Background; throttled to >24h between sweeps by `shouldRunGc`.
+    setTimeout(() => {
+      void this.maybeRunSnapshotGc();
+    }, 0);
+
     if (this.settings.indexingMode === 'auto' && this.embedClient) {
       // Background — never block plugin onload.
       setTimeout(() => {
@@ -960,6 +967,62 @@ export default class SagittariusPlugin extends Plugin {
    * surface it. Idempotent: re-running on an existing SHA returns
    * a friendly "already snapshotted" Notice.
    */
+  /**
+   * Phase 16 (v2.0.0) — snapshot GC pass per ADR-037 D4. Throttled to
+   * once per 24h via `timeTravelLastGcAt`. Tagged and pinned snapshots
+   * are immune; only untagged + unpinned snapshots past
+   * `timeTravelRetentionDays` are deleted.
+   *
+   * Failure modes: silent + log-only. Plugin load must not be blocked
+   * by GC failure, and the operator gets no benefit from a Notice
+   * about retention bookkeeping.
+   */
+  private async maybeRunSnapshotGc(): Promise<void> {
+    if (
+      !shouldRunGc(
+        Date.now(),
+        this.settings.timeTravelLastGcAt,
+        this.settings.timeTravelEnabled,
+      )
+    ) {
+      return;
+    }
+    if (this.engine === undefined) {
+      // Retrieval not initialized — can't delete chunks. Skip this
+      // sweep; we'll try again next plugin load.
+      return;
+    }
+    try {
+      const { keep, expire } = partitionExpiredSnapshots(
+        this.settings.timeTravelSnapshots,
+        Date.now(),
+        this.settings.timeTravelRetentionDays,
+      );
+      if (expire.length === 0) {
+        // Nothing to delete, but still mark the sweep as run so we
+        // don't retry until 24h elapses.
+        this.settings.timeTravelLastGcAt = Date.now();
+        await this.saveSettings();
+        return;
+      }
+      let chunksDeleted = 0;
+      for (const snap of expire) {
+        chunksDeleted += this.engine.deleteChunksForCommit(snap.commitSha);
+      }
+      this.settings.timeTravelSnapshots = keep;
+      this.settings.timeTravelLastGcAt = Date.now();
+      await this.saveSettings();
+      await this.indexCoordinator?.flushNow();
+      console.warn(
+        `[sagittarius] time-travel GC: expired ${expire.length} snapshot(s), ` +
+          `removed ${chunksDeleted} chunks.`,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[sagittarius] time-travel GC failed: ${msg}`);
+    }
+  }
+
   private async runSnapshotForTimeTravel(): Promise<void> {
     if (!this.settings.timeTravelEnabled) {
       new Notice(
