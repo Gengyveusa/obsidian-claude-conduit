@@ -114,6 +114,7 @@ import { AnthropicJournalGenerator, type JournalGenerationResult } from './memor
 import { journalPathFor } from './memory/journal';
 import { LiveMemoryProvider } from './memory/LiveMemoryProvider';
 import type { CascadeResult } from './memory/MemoryCascade';
+import { readHeadSha, vaultHasGit } from './timetravel/git';
 import { CallbackApprovalGate } from './writes/CallbackApprovalGate';
 import { ExternalProposalQueue } from './writes/ExternalProposalQueue';
 import { JsonTransactionLog } from './writes/TransactionLog';
@@ -558,6 +559,18 @@ export default class SagittariusPlugin extends Plugin {
       },
     });
 
+    // Phase 16 (v1.9.0 substrate; v2.0 MVP) — time-travel snapshots
+    // per ADR-037 D3. Session 1: command stub that validates git
+    // presence + reads HEAD. Actual snapshot indexing wires in
+    // session 2 alongside the time-travel mode dropdown.
+    this.addCommand({
+      id: 'snapshot-time-travel',
+      name: 'Snapshot vault for time-travel',
+      callback: () => {
+        void this.runSnapshotForTimeTravel();
+      },
+    });
+
     try {
       await this.initializeIndexing();
     } catch (err) {
@@ -937,6 +950,42 @@ export default class SagittariusPlugin extends Plugin {
    * Operator-triggered overrides the daily idempotency check; the
    * scheduler path (`auto: true`) honors it.
    */
+  /**
+   * Phase 16 (v1.9.0 substrate) — `Sagittarius: Snapshot vault for
+   * time-travel` stub per ADR-037 D3. Session 1 surface: validate
+   * `timeTravelEnabled`, validate git presence, read HEAD SHA,
+   * surface a Notice with the SHA. The actual chunk-snapshot
+   * indexing (writing chunks with this commit_sha) lands in
+   * session 2.
+   */
+  private async runSnapshotForTimeTravel(): Promise<void> {
+    if (!this.settings.timeTravelEnabled) {
+      new Notice(
+        'Sagittarius: time-travel is off. Enable it in Settings → Sagittarius → Time-travel before running this command.',
+      );
+      return;
+    }
+    const adapter = new VaultAdapterImpl(this.app);
+    if (!(await vaultHasGit(adapter))) {
+      new Notice(
+        'Sagittarius: time-travel needs git. Run `git init` in your vault, commit at least once, then try again.',
+      );
+      return;
+    }
+    const sha = await readHeadSha(adapter);
+    if (sha === null) {
+      new Notice(
+        'Sagittarius: could not resolve git HEAD. Vault may have no commits yet, or HEAD is in an unusual state.',
+      );
+      return;
+    }
+    // Session 1 stub: surface the SHA. Session 2 wires the actual
+    // chunk snapshot via `indexer.runForCommit(sha)` (TBD).
+    new Notice(
+      `Sagittarius: HEAD is \`${sha.slice(0, 7)}\`. Snapshot indexing lands in v2.0 session 2 — for now this confirms time-travel substrate is wired.`,
+    );
+  }
+
   private async runGenerateBriefing(opts: { auto?: boolean } = {}): Promise<void> {
     if (!this.settings.briefingEnabled) {
       new Notice(

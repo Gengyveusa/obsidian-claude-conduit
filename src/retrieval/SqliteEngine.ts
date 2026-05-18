@@ -92,6 +92,20 @@ export class SqliteEngine {
       );
     `);
 
+    // Phase 16 (v2.0) — time-travel snapshots per ADR-037 D2 + D5.
+    // Add the commit_sha column to chunks if it's not already there
+    // (ALTER TABLE ADD COLUMN is sqlite-supported and idempotent via
+    // PRAGMA introspection). NULL commit_sha = current-state chunk
+    // (back-compat with v1.x installs).
+    //
+    // SCHEMA_VERSION stays at '1' deliberately: the column is nullable
+    // + ignored by existing readers, so this is a non-breaking
+    // additive change. Pre-Phase-16 plugin versions reading a
+    // post-Phase-16 DB will see chunks normally and ignore the new
+    // column. Bumping SCHEMA_VERSION here would force a rebuild on
+    // every existing install — not warranted.
+    this.maybeAddCommitShaColumn();
+
     const stmt = this.db.prepare(
       'INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)',
     );
@@ -109,6 +123,26 @@ export class SqliteEngine {
       stmt.run(row);
     }
     stmt.free();
+  }
+
+  /**
+   * Phase 16 (v2.0) — idempotent `commit_sha` column add per ADR-037 D5.
+   * Checks `PRAGMA table_info(chunks)` for the column; ALTERs if
+   * missing. Also creates the supporting index. Safe to call on
+   * brand-new DBs and existing v1.x DBs alike.
+   *
+   * Exposed via `migrate` only; not part of the public surface.
+   */
+  private maybeAddCommitShaColumn(): void {
+    const info = this.db.exec("PRAGMA table_info('chunks')");
+    const cols = (info[0]?.values ?? []).map((row) => String(row[1]));
+    if (cols.includes('commit_sha')) {
+      return;
+    }
+    this.db.exec(`
+      ALTER TABLE chunks ADD COLUMN commit_sha TEXT;
+      CREATE INDEX IF NOT EXISTS idx_chunks_commit_sha ON chunks(commit_sha);
+    `);
   }
 
   /**

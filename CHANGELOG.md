@@ -4,6 +4,15 @@ Versioning is semver-ish: minor bumps signal new user-facing capability,
 patch bumps are polish + bug fixes within a phase. Each phase has a plan
 ADR (numbered) and a close ADR (retrospective) — see `docs/`.
 
+## [1.9.0] — 2026-05-18 (Phase 16 session 1 — time-travel substrate — ADR-037)
+
+- **Schema migration**: chunks table gains nullable `commit_sha` column + supporting index. Non-breaking — existing chunks keep `commit_sha = NULL` (current state); schema_version stays at `1` (per ADR-037 D5 — additive change, no rebuild needed).
+- **`src/timetravel/git.ts`** — pure helpers (`readHeadSha`, `resolveRefFromPackedRefs`, `vaultHasGit`) that read git history via the existing `VaultAdapter` (no subprocess, no `git` CLI). Supports loose-ref + packed-refs resolution, detached HEAD, lowercase-normalized output, graceful `null` returns when git isn't present.
+- **`Sagittarius: Snapshot vault for time-travel`** command stub — validates `timeTravelEnabled` + git presence, resolves HEAD SHA, surfaces a Notice. Actual chunk snapshotting (writing chunks with `commit_sha = <HEAD>`) lands in session 2.
+- 2 new settings: `timeTravelEnabled` (opt-in, default false per ADR-037 D1), `timeTravelRetentionDays` (365 per D4).
+- **Sessions 2 + 3 deferred**: ChatView `time-travel` mode + snapshot picker modal + write-blocking + banner + citation date-suffix + GC + tests for the integration path.
+- Tests: +15 (1193 total).
+
 ## [1.8.0] — 2026-05-18 (Phase 15 MVP — Negotiation mode — ADR-036)
 
 - **New chat mode `Negotiate`** joins `Chat` and `Vault QA` in the ChatView dropdown. When selected, agent flips to adversarial posture: finds the strongest counter-evidence to the operator's thesis from their own vault notes.
