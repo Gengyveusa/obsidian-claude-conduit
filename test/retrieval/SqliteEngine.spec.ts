@@ -123,6 +123,206 @@ describe('SqliteEngine', () => {
     }).not.toThrow();
     engine1.close();
   });
+
+  describe('Phase 16 — time-travel snapshots (ADR-037 D2)', () => {
+    function makeVec(seed: number): Float32Array {
+      const v = new Float32Array(VECTOR_DIM);
+      for (let i = 0; i < VECTOR_DIM; i++) {
+        v[i] = Math.sin((i + seed) / 13);
+      }
+      return v;
+    }
+
+    it('upsertChunk with commitSha writes a snapshot row that coexists with current-state', async () => {
+      const engine = await SqliteEngine.open({ writerVersion: 'test' });
+      const vec = makeVec(0);
+
+      engine.upsertChunk({
+        notePath: 'a.md',
+        chunkIndex: 0,
+        text: 'current text',
+        embedding: vec,
+      });
+      engine.upsertChunk({
+        notePath: 'a.md',
+        chunkIndex: 0,
+        text: 'feb text',
+        embedding: vec,
+        commitSha: 'aaaaaa1111111111111111111111111111111111',
+      });
+
+      expect(engine.count('chunks')).toBe(2);
+      // getChunk reads current state only.
+      expect(engine.getChunk('a.md', 0)?.text).toBe('current text');
+      // Snapshot retrievable via allChunks with commitSha filter.
+      const snapshotted = engine.allChunks({
+        commitSha: 'aaaaaa1111111111111111111111111111111111',
+      });
+      expect(snapshotted).toHaveLength(1);
+      expect(snapshotted[0].text).toBe('feb text');
+      expect(snapshotted[0].commitSha).toBe(
+        'aaaaaa1111111111111111111111111111111111',
+      );
+
+      engine.close();
+    });
+
+    it('upsertChunk replaces an existing snapshot row for the same (path, idx, sha)', async () => {
+      const engine = await SqliteEngine.open({ writerVersion: 'test' });
+      const vec = makeVec(1);
+      const sha = 'bbbbbb1111111111111111111111111111111111';
+
+      engine.upsertChunk({
+        notePath: 'a.md',
+        chunkIndex: 0,
+        text: 'v1',
+        embedding: vec,
+        commitSha: sha,
+      });
+      engine.upsertChunk({
+        notePath: 'a.md',
+        chunkIndex: 0,
+        text: 'v2',
+        embedding: vec,
+        commitSha: sha,
+      });
+
+      expect(engine.count('chunks')).toBe(1);
+      const rows = engine.allChunks({ commitSha: sha });
+      expect(rows[0].text).toBe('v2');
+      engine.close();
+    });
+
+    it('allChunks() defaults to current-state only (back-compat with pre-Phase-16 callers)', async () => {
+      const engine = await SqliteEngine.open({ writerVersion: 'test' });
+      const vec = makeVec(2);
+      engine.upsertChunk({ notePath: 'a.md', chunkIndex: 0, text: 'now', embedding: vec });
+      engine.upsertChunk({
+        notePath: 'a.md',
+        chunkIndex: 0,
+        text: 'then',
+        embedding: vec,
+        commitSha: 'cccccc1111111111111111111111111111111111',
+      });
+      const out = engine.allChunks();
+      expect(out).toHaveLength(1);
+      expect(out[0].text).toBe('now');
+      expect(out[0].commitSha).toBeNull();
+      engine.close();
+    });
+
+    it('listSnapshotShas() reports distinct snapshots with counts and excludes current-state', async () => {
+      const engine = await SqliteEngine.open({ writerVersion: 'test' });
+      const vec = makeVec(3);
+      const sha1 = 'dddddd1111111111111111111111111111111111';
+      const sha2 = 'eeeeee2222222222222222222222222222222222';
+      engine.upsertChunk({ notePath: 'a.md', chunkIndex: 0, text: 'a', embedding: vec });
+      engine.upsertChunk({
+        notePath: 'a.md',
+        chunkIndex: 0,
+        text: 'a-feb',
+        embedding: vec,
+        commitSha: sha1,
+      });
+      engine.upsertChunk({
+        notePath: 'a.md',
+        chunkIndex: 1,
+        text: 'a1-feb',
+        embedding: vec,
+        commitSha: sha1,
+      });
+      engine.upsertChunk({
+        notePath: 'b.md',
+        chunkIndex: 0,
+        text: 'b-mar',
+        embedding: vec,
+        commitSha: sha2,
+      });
+
+      const snapshots = engine.listSnapshotShas();
+      expect(snapshots).toEqual([
+        { commitSha: sha1, chunkCount: 2 },
+        { commitSha: sha2, chunkCount: 1 },
+      ]);
+      engine.close();
+    });
+
+    it('deleteChunksForCommit() removes only the given snapshot rows', async () => {
+      const engine = await SqliteEngine.open({ writerVersion: 'test' });
+      const vec = makeVec(4);
+      const sha = 'ffffff1111111111111111111111111111111111';
+      engine.upsertChunk({ notePath: 'a.md', chunkIndex: 0, text: 'now', embedding: vec });
+      engine.upsertChunk({
+        notePath: 'a.md',
+        chunkIndex: 0,
+        text: 'then',
+        embedding: vec,
+        commitSha: sha,
+      });
+
+      const deleted = engine.deleteChunksForCommit(sha);
+      expect(deleted).toBe(1);
+      expect(engine.count('chunks')).toBe(1);
+      expect(engine.getChunk('a.md', 0)?.text).toBe('now');
+      // Idempotent re-run.
+      expect(engine.deleteChunksForCommit(sha)).toBe(0);
+      engine.close();
+    });
+
+    it('deleteChunksForCommit refuses an empty SHA', async () => {
+      const engine = await SqliteEngine.open({ writerVersion: 'test' });
+      expect(() => engine.deleteChunksForCommit('')).toThrow(/must be non-empty/);
+      engine.close();
+    });
+
+    it('countChunksAtCommit returns 0 for an unknown SHA', async () => {
+      const engine = await SqliteEngine.open({ writerVersion: 'test' });
+      expect(engine.countChunksAtCommit('deadbeef')).toBe(0);
+      engine.close();
+    });
+
+    it('deleteChunksForPath leaves snapshot rows intact', async () => {
+      const engine = await SqliteEngine.open({ writerVersion: 'test' });
+      const vec = makeVec(5);
+      const sha = '0011001100110011001100110011001100110011';
+      engine.upsertChunk({ notePath: 'a.md', chunkIndex: 0, text: 'now', embedding: vec });
+      engine.upsertChunk({
+        notePath: 'a.md',
+        chunkIndex: 0,
+        text: 'then',
+        embedding: vec,
+        commitSha: sha,
+      });
+      engine.deleteChunksForPath('a.md');
+      // Current-state row gone, snapshot row preserved.
+      expect(engine.getChunk('a.md', 0)).toBeNull();
+      const snap = engine.allChunks({ commitSha: sha });
+      expect(snap).toHaveLength(1);
+      engine.close();
+    });
+
+    it('migration is idempotent on re-open of a populated DB', async () => {
+      const engine1 = await SqliteEngine.open({ writerVersion: 'test' });
+      const vec = makeVec(6);
+      const sha = '2233223322332233223322332233223322332233';
+      engine1.upsertChunk({ notePath: 'a.md', chunkIndex: 0, text: 'now', embedding: vec });
+      engine1.upsertChunk({
+        notePath: 'a.md',
+        chunkIndex: 0,
+        text: 'snap',
+        embedding: vec,
+        commitSha: sha,
+      });
+      const buf = engine1.export();
+      engine1.close();
+
+      const engine2 = await SqliteEngine.open({ buffer: buf, writerVersion: 'test' });
+      expect(engine2.count('chunks')).toBe(2);
+      expect(engine2.getChunk('a.md', 0)?.text).toBe('now');
+      expect(engine2.allChunks({ commitSha: sha })[0].text).toBe('snap');
+      engine2.close();
+    });
+  });
 });
 
 describe('float32 LE encoding helpers', () => {

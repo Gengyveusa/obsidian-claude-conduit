@@ -1,3 +1,5 @@
+import type { SnapshotMeta } from '../timetravel/types';
+
 /**
  * Plugin settings — per docs/02_SPEC.md §3.1.
  *
@@ -368,6 +370,15 @@ export interface SagittariusSettings {
    * are kept indefinitely regardless of this setting.
    */
   timeTravelRetentionDays: number;
+  /**
+   * Phase 16 (v1.10.0) — recorded snapshots per ADR-037 D6. The chunks
+   * themselves live in the SQLite index under `commit_sha`; this
+   * parallel list of `SnapshotMeta` carries display labels + tag +
+   * timestamps so the picker modal renders instantly without scanning
+   * the index. Mutated by `runSnapshotForTimeTravel` and (session 3)
+   * the GC pass.
+   */
+  timeTravelSnapshots: SnapshotMeta[];
 
   // Phase 9.x (v1.4.0) — proactive draft suggestions per ADR-026 D8(b)
   /**
@@ -487,6 +498,7 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
 
   timeTravelEnabled: false,
   timeTravelRetentionDays: 365,
+  timeTravelSnapshots: [],
 
   draftSuggestionMinNotes: 5,
 

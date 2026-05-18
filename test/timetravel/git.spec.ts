@@ -1,7 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { VaultAdapter, VaultStat } from '../../src/agent/types';
-import { readHeadSha, resolveRefFromPackedRefs, vaultHasGit } from '../../src/timetravel/git';
+import {
+  findTagForCommitInPackedRefs,
+  readHeadSha,
+  resolveRefFromPackedRefs,
+  resolveTagForCommit,
+  vaultHasGit,
+} from '../../src/timetravel/git';
 
 class MemAdapter implements VaultAdapter {
   files = new Map<string, string>();
@@ -155,5 +161,75 @@ describe('resolveRefFromPackedRefs', () => {
   it('rejects malformed SHA values', () => {
     const packed = 'not-a-sha refs/heads/main\n';
     expect(resolveRefFromPackedRefs(packed, 'refs/heads/main')).toBeNull();
+  });
+});
+
+describe('findTagForCommitInPackedRefs (Phase 16 / ADR-037 D4)', () => {
+  it('matches a lightweight tag whose target IS the commit', () => {
+    const packed = [
+      '# pack-refs with: peeled fully-peeled sorted',
+      `${SHA_A} refs/heads/main`,
+      `${SHA_B} refs/tags/v1.5.0`,
+    ].join('\n');
+    expect(findTagForCommitInPackedRefs(packed, SHA_B)).toBe('v1.5.0');
+  });
+
+  it('matches an annotated tag via its peel marker', () => {
+    const tagObjSha = 'cccccc1111111111111111111111111111111111';
+    const commitSha = 'aaaaaa2222222222222222222222222222222222';
+    const packed = [
+      `${tagObjSha} refs/tags/v2.0.0`,
+      `^${commitSha}`,
+    ].join('\n');
+    expect(findTagForCommitInPackedRefs(packed, commitSha)).toBe('v2.0.0');
+    // The tag-object SHA itself is NOT considered a match for the
+    // commit — only the peeled commit-sha matches.
+    expect(findTagForCommitInPackedRefs(packed, tagObjSha)).toBe('v2.0.0');
+  });
+
+  it('returns null for an untagged commit', () => {
+    const packed = [`${SHA_A} refs/heads/main`, `${SHA_B} refs/tags/v1.0.0`].join('\n');
+    expect(findTagForCommitInPackedRefs(packed, 'feedface' + '0'.repeat(32))).toBeNull();
+  });
+
+  it('returns null when packed-refs only has branches', () => {
+    const packed = `${SHA_A} refs/heads/main\n`;
+    expect(findTagForCommitInPackedRefs(packed, SHA_A)).toBeNull();
+  });
+
+  it('case-insensitive on commit SHA input', () => {
+    const upper = SHA_A.toUpperCase();
+    const packed = `${SHA_A} refs/tags/v9.9.9\n`;
+    expect(findTagForCommitInPackedRefs(packed, upper)).toBe('v9.9.9');
+  });
+});
+
+describe('resolveTagForCommit (Phase 16 / ADR-037 D4)', () => {
+  let adapter: MemAdapter;
+
+  beforeEach(() => {
+    adapter = new MemAdapter();
+  });
+
+  it('returns the tag name from packed-refs', async () => {
+    adapter.files.set(
+      '.git/packed-refs',
+      `${SHA_B} refs/tags/v1.5.0\n`,
+    );
+    expect(await resolveTagForCommit(adapter, SHA_B)).toBe('v1.5.0');
+  });
+
+  it('returns null when packed-refs is absent', async () => {
+    // No `.git/packed-refs` written.
+    expect(await resolveTagForCommit(adapter, SHA_A)).toBeNull();
+  });
+
+  it('returns null for an unparseable commit SHA', async () => {
+    expect(await resolveTagForCommit(adapter, 'not-a-sha')).toBeNull();
+  });
+
+  it('returns null for an untagged commit', async () => {
+    adapter.files.set('.git/packed-refs', `${SHA_A} refs/heads/main\n`);
+    expect(await resolveTagForCommit(adapter, SHA_A)).toBeNull();
   });
 });

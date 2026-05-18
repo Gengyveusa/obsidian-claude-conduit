@@ -114,7 +114,9 @@ import { AnthropicJournalGenerator, type JournalGenerationResult } from './memor
 import { journalPathFor } from './memory/journal';
 import { LiveMemoryProvider } from './memory/LiveMemoryProvider';
 import type { CascadeResult } from './memory/MemoryCascade';
-import { readHeadSha, vaultHasGit } from './timetravel/git';
+import { readHeadSha, resolveTagForCommit, vaultHasGit } from './timetravel/git';
+import { SnapshotIndexer } from './timetravel/SnapshotIndexer';
+import type { SnapshotMeta } from './timetravel/types';
 import { CallbackApprovalGate } from './writes/CallbackApprovalGate';
 import { ExternalProposalQueue } from './writes/ExternalProposalQueue';
 import { JsonTransactionLog } from './writes/TransactionLog';
@@ -951,12 +953,12 @@ export default class SagittariusPlugin extends Plugin {
    * scheduler path (`auto: true`) honors it.
    */
   /**
-   * Phase 16 (v1.9.0 substrate) — `Sagittarius: Snapshot vault for
-   * time-travel` stub per ADR-037 D3. Session 1 surface: validate
-   * `timeTravelEnabled`, validate git presence, read HEAD SHA,
-   * surface a Notice with the SHA. The actual chunk-snapshot
-   * indexing (writing chunks with this commit_sha) lands in
-   * session 2.
+   * Phase 16 (v1.10.0) — `Sagittarius: Snapshot vault for
+   * time-travel` per ADR-037 D3. Resolves HEAD, runs
+   * `SnapshotIndexer.snapshot(sha)` over the current vault state,
+   * records `SnapshotMeta` in settings so the picker modal can
+   * surface it. Idempotent: re-running on an existing SHA returns
+   * a friendly "already snapshotted" Notice.
    */
   private async runSnapshotForTimeTravel(): Promise<void> {
     if (!this.settings.timeTravelEnabled) {
@@ -979,11 +981,73 @@ export default class SagittariusPlugin extends Plugin {
       );
       return;
     }
-    // Session 1 stub: surface the SHA. Session 2 wires the actual
-    // chunk snapshot via `indexer.runForCommit(sha)` (TBD).
-    new Notice(
-      `Sagittarius: HEAD is \`${sha.slice(0, 7)}\`. Snapshot indexing lands in v2.0 session 2 — for now this confirms time-travel substrate is wired.`,
+
+    if (this.engine === undefined || this.embedClient === undefined) {
+      new Notice(
+        'Sagittarius: time-travel needs retrieval. Set your HuggingFace token in Settings → Sagittarius and build the index first.',
+      );
+      return;
+    }
+
+    // Short-circuit if this SHA is already in the metadata list — saves
+    // the operator a confusing "0 chunks added" Notice on re-runs.
+    const existing = this.settings.timeTravelSnapshots.find(
+      (s) => s.commitSha === sha,
     );
+    if (existing !== undefined) {
+      new Notice(
+        `Sagittarius: HEAD \`${sha.slice(0, 7)}\` is already snapshotted (${existing.chunkCount} chunks, taken ${existing.date}).`,
+      );
+      return;
+    }
+
+    const notice = new Notice('Sagittarius: snapshotting vault for time-travel…', 0);
+    try {
+      const indexer = new SnapshotIndexer({
+        adapter,
+        embedClient: this.embedClient,
+        engine: this.engine,
+        excludePathPrefixes: ['20-Corpus/', this.settings.conversationLogPath],
+      });
+      const result = await indexer.snapshot(sha);
+      notice.hide();
+
+      if (result.alreadyExisted) {
+        new Notice(
+          `Sagittarius: a snapshot for \`${sha.slice(0, 7)}\` already exists in the index. No work done.`,
+        );
+        return;
+      }
+
+      // Persist metadata for the picker modal + future GC.
+      const tag = await resolveTagForCommit(adapter, sha);
+      const newSnapshot: SnapshotMeta = {
+        commitSha: sha,
+        date: isoDateLocal(new Date()),
+        createdAt: Date.now(),
+        tag,
+        pinned: false,
+        chunkCount: result.chunksAdded,
+      };
+      this.settings.timeTravelSnapshots = [
+        ...this.settings.timeTravelSnapshots,
+        newSnapshot,
+      ];
+      await this.saveSettings();
+
+      // Persist the index so the new snapshot rows survive a reload.
+      await this.indexCoordinator?.flushNow();
+
+      const errorSuffix =
+        result.errors.length > 0 ? ` (${result.errors.length} file errors)` : '';
+      new Notice(
+        `Sagittarius: snapshot \`${sha.slice(0, 7)}\` indexed — ${result.notesProcessed} notes, ${result.chunksAdded} chunks${errorSuffix}.`,
+      );
+    } catch (err) {
+      notice.hide();
+      const msg = err instanceof Error ? err.message : String(err);
+      new Notice(`Sagittarius: snapshot failed — ${msg}`);
+    }
   }
 
   private async runGenerateBriefing(opts: { auto?: boolean } = {}): Promise<void> {
@@ -1599,6 +1663,24 @@ export default class SagittariusPlugin extends Plugin {
   /** Reset the cached agent so the next chat picks up changed settings. */
   invalidateAgent(): void {
     this.agentBundle = null;
+  }
+
+  /**
+   * Phase 16 (v1.10.0) — set the registry-level write-block for
+   * time-travel mode per ADR-037 D7. The bundle's `ToolRegistry`
+   * remembers the reason and throws it on every write-tool execute()
+   * until cleared.
+   *
+   * Safe to call before the agent bundle exists — short-circuits to
+   * a no-op (the block will be applied on `buildAgent()`).
+   */
+  setTimeTravelWriteBlock(reason: string): void {
+    this.agentBundle?.deps.tools.setWriteBlock(reason);
+  }
+
+  /** Clear the registry-level write-block. No-op if no bundle yet. */
+  clearTimeTravelWriteBlock(): void {
+    this.agentBundle?.deps.tools.setWriteBlock(null);
   }
 
   async activateChatView(): Promise<void> {
@@ -3168,6 +3250,22 @@ export default class SagittariusPlugin extends Plugin {
 }
 
 /** Strip a trailing `.md` from a vault path. Used to build clean `[[wikilinks]]`. */
+/**
+ * Phase 16 (v1.10.0) — ISO `YYYY-MM-DD` in local time. Used as the
+ * operator-visible date label on snapshot metadata (per ADR-037 D6/D8
+ * the date is plugin-local, not UTC, because the operator's mental
+ * model of "when was this taken" is wall-clock).
+ *
+ * @example isoDateLocal(new Date('2026-05-18T03:00:00Z'))
+ *   // → '2026-05-18' if the host is UTC; '2026-05-17' on west-coast clocks at 8pm.
+ */
+function isoDateLocal(d: Date): string {
+  const yyyy = d.getFullYear().toString().padStart(4, '0');
+  const mm = (d.getMonth() + 1).toString().padStart(2, '0');
+  const dd = d.getDate().toString().padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function stripMdSuffix(path: string): string {
   return path.endsWith('.md') ? path.slice(0, -3) : path;
 }

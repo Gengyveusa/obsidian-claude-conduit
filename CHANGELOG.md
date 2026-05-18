@@ -4,6 +4,20 @@ Versioning is semver-ish: minor bumps signal new user-facing capability,
 patch bumps are polish + bug fixes within a phase. Each phase has a plan
 ADR (numbered) and a close ADR (retrospective) — see `docs/`.
 
+## [1.10.0] — 2026-05-18 (Phase 16 session 2 — time-travel mode & snapshot indexing — ADR-037)
+
+- **`Sagittarius: Snapshot vault for time-travel`** now actually snapshots — runs `SnapshotIndexer` over current vault state and writes chunks with `commit_sha = <HEAD>`. Idempotent (skips when the SHA already has chunks); persists `SnapshotMeta` to settings; persists the index buffer via the new `IndexCoordinator.flushNow()`; surfaces a Notice with the note + chunk counts. Auto-detects git tag pointing at HEAD via `resolveTagForCommit` (packed-refs lightweight + annotated) and records it on the snapshot.
+- **Schema rebuild** drops the legacy `UNIQUE(note_path, chunk_index)` constraint on the chunks table and replaces it with two PARTIAL UNIQUE indexes — one for current-state (`commit_sha IS NULL`) and one for snapshots (`commit_sha IS NOT NULL`) — so a `(path, idx)` pair can coexist across current + any number of snapshots without collision per ADR-037 D2. Migration is automatic on plugin load; non-destructive (existing rows preserved).
+- **`SqliteEngine` surface**: `upsertChunk` accepts optional `commitSha`; `allChunks({ commitSha })` filters by snapshot (default = current-state for back-compat); `listSnapshotShas()`, `deleteChunksForCommit()`, `countChunksAtCommit()` for the picker + GC. `getChunk` / `countChunksForPath` / `deleteChunksForPath` scope to current-state only — pre-Phase-16 callers (Indexer, drafting, MCP read tools) keep their semantics.
+- **`RetrievalLayer.queryUnified` gains `commitSha`** — passed through to `scoreEngine`; corpus engine always queries current-state. Time-travel mode automatically scopes pre-retrieval + `search_vault` to the active snapshot.
+- **ChatView `mode: 'time-travel'`** per ADR-037 D6 — fourth dropdown option (hidden unless `timeTravelEnabled`), gated on retrieval like vault-qa/negotiate. Picking it opens `SnapshotPickerModal` (lists snapshots newest-first with date/SHA/tag/pinned/chunk-count); cancel or pick "Current" restores the previous mode cleanly.
+- **⏳ time-travel banner** above messages — "querying vault as of YYYY-MM-DD · `<sha7>` · tag: X. Writes are blocked. Switch mode in the dropdown to exit."
+- **`ToolRegistry.setWriteBlock(reason)`** per ADR-037 D7 — when set, every `execute()` for a tool in `WRITE_TOOL_NAMES` (10 names: create/append/patch/rewrite/add_frontmatter/move/rename/delete/link/file_asset) throws the reason as an actionable error. Reads pass through unchanged. ChatView sets it on time-travel selection, clears it on mode-switch or panel close.
+- **System prompt addendum for time-travel** instructs the agent to cite `[[note-path]] (as of YYYY-MM-DD)`, treats "now/today" as the snapshot date, and explicitly refuses to claim cross-snapshot diffs unless asked.
+- 1 new setting: `timeTravelSnapshots: SnapshotMeta[]` — parallel record of (commitSha, date, createdAt, tag, pinned, chunkCount) per snapshot, drives the picker without scanning the index every render.
+- **Session 3 remaining**: GC for expired snapshots per `timeTravelRetentionDays` (tagged + pinned exempt per D4), integration tests for the agent loop with time-travel, performance smoke on a populated snapshot, v2.0.0 release.
+- Tests: +31 (1224 total). New surface area covered: SqliteEngine snapshot semantics (10 tests), SnapshotIndexer (6 tests), RetrievalLayer commit-sha filter (2 tests), ToolRegistry write-block (5 tests), git tag resolution (8 tests).
+
 ## [1.9.0] — 2026-05-18 (Phase 16 session 1 — time-travel substrate — ADR-037)
 
 - **Schema migration**: chunks table gains nullable `commit_sha` column + supporting index. Non-breaking — existing chunks keep `commit_sha = NULL` (current state); schema_version stays at `1` (per ADR-037 D5 — additive change, no rebuild needed).

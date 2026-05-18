@@ -19,6 +19,28 @@ const MAX_STEPS = 20;
 const MAX_OUTPUT_TOKENS = 4096;
 
 /**
+ * Chat mode union. Phase 16 (v1.10.0) adds `'time-travel'` per ADR-037
+ * D6: the agent queries the vault as of a chosen past snapshot
+ * (`activeSnapshot.commitSha`) and writes are blocked at the
+ * ToolRegistry layer per D7.
+ */
+export type ChatMode = 'chat' | 'vault-qa' | 'negotiate' | 'time-travel';
+
+/**
+ * Phase 16 (v1.10.0) — descriptor of the snapshot the operator picked
+ * for the current chat turn per ADR-037 D6. `null` (or omitted) means
+ * current-state — the default for `chat` / `vault-qa` / `negotiate`
+ * modes. When `mode === 'time-travel'` the caller MUST supply this.
+ */
+export interface ActiveSnapshot {
+  commitSha: string;
+  /** ISO YYYY-MM-DD label for the citation suffix + system prompt. */
+  date: string;
+  /** Optional human-friendly tag ("v1.5.0", "q1-decisions"). */
+  tag: string | null;
+}
+
+/**
  * Per-million-token pricing in USD as of cutoff. Sonnet 4.6: $3 in, $15 out.
  * Opus 4.7: $15 in, $75 out. Haiku 4.5: $1 in, $5 out.
  */
@@ -145,9 +167,10 @@ export class ConduitAgent {
   async chat(
     userMessage: string,
     history: MessageParam[],
-    mode: 'chat' | 'vault-qa' | 'negotiate',
+    mode: ChatMode,
     onToken?: (text: string) => void,
     draftPath?: string | null,
+    activeSnapshot?: ActiveSnapshot | null,
   ): Promise<TurnResult> {
     const startedAt = Date.now();
 
@@ -162,8 +185,11 @@ export class ConduitAgent {
     this.deps.ctx.begin();
 
     try {
-      // 1. vault-qa: one pre-retrieval pass to seed the system prompt.
-      const retrieved = await this.preRetrieve(userMessage, mode);
+      // 1. vault-qa / negotiate / time-travel: pre-retrieve to seed
+      //    the system prompt. Time-travel passes the snapshot's
+      //    commitSha so the query scores against historical chunks.
+      const snapshot = activeSnapshot ?? null;
+      const retrieved = await this.preRetrieve(userMessage, mode, snapshot);
 
       // 1b. Phase 9 (v1.3.0) — collect memory cascade per ADR-029.
       // Per-turn fetch per D6; provider errors degrade to "no memory"
@@ -179,7 +205,13 @@ export class ConduitAgent {
       }
 
       // 2. Build the system prompt with cache breakpoints.
-      const system = this.buildSystemPrompt(retrieved, mode, memory, draftPath ?? null);
+      const system = this.buildSystemPrompt(
+        retrieved,
+        mode,
+        memory,
+        draftPath ?? null,
+        snapshot,
+      );
 
       // 3. Compose the message stack.
       const messages: MessageParam[] = [
@@ -293,18 +325,23 @@ export class ConduitAgent {
 
   private async preRetrieve(
     query: string,
-    mode: 'chat' | 'vault-qa' | 'negotiate',
+    mode: ChatMode,
+    snapshot: ActiveSnapshot | null,
   ): Promise<ConversationCitation[]> {
-    // Phase 15 (v1.8.0) — negotiate mode fires pre-retrieval just
-    // like vault-qa per ADR-036 D6: the agent needs vault context as
-    // raw material for the counter-evidence search.
-    if ((mode !== 'vault-qa' && mode !== 'negotiate') || !this.deps.retrieval) {
+    // Phase 15 (v1.8.0) — negotiate fires pre-retrieval like vault-qa.
+    // Phase 16 (v1.10.0) — time-travel always pre-retrieves against
+    // the snapshot's commitSha per ADR-037 D6.
+    const retrievingMode =
+      mode === 'vault-qa' || mode === 'negotiate' || mode === 'time-travel';
+    if (!retrievingMode || !this.deps.retrieval) {
       return [];
     }
+    const commitSha = mode === 'time-travel' ? snapshot?.commitSha ?? null : null;
     const hits = await this.deps.retrieval.queryUnified({
       query,
       limit: this.settings.retrievalK,
       sourceDb: 'both',
+      commitSha,
     });
     return hits.map((h) => ({
       path: h.path,
@@ -392,15 +429,43 @@ export class ConduitAgent {
    */
   private buildSystemPrompt(
     retrieved: ConversationCitation[],
-    mode: 'chat' | 'vault-qa' | 'negotiate',
+    mode: ChatMode,
     memory: string | null,
     draftPath: string | null,
+    snapshot: ActiveSnapshot | null,
   ): TextBlockParam[] {
     // Phase 15 (v1.8.0) — third mode 'negotiate' per ADR-036 D2:
     // adversarial posture, cite every counter, no softening.
+    // Phase 16 (v1.10.0) — fourth mode 'time-travel' per ADR-037 D6/D8.
     const modeAddendum = (() => {
       if (mode === 'vault-qa') {
         return 'Mode: VAULT QA. Every answer must cite at least one note from search_vault results.';
+      }
+      if (mode === 'time-travel') {
+        const dateLabel = snapshot?.date ?? '(unknown date)';
+        const shaLabel =
+          snapshot !== null ? snapshot.commitSha.slice(0, 7) : '(unknown sha)';
+        const tagLabel =
+          snapshot !== null && snapshot.tag !== null
+            ? ` (tagged \`${snapshot.tag}\`)`
+            : '';
+        return [
+          `Mode: TIME-TRAVEL. You're querying the vault as of ${dateLabel} — commit \`${shaLabel}\`${tagLabel}.`,
+          'The pre-retrieved chunks and any `search_vault` results are SCOPED',
+          'to this past snapshot. Do not assume current-state vault contents;',
+          'do not claim a note was edited / deleted / created relative to now',
+          "unless the operator explicitly asks for a comparison.",
+          '',
+          `- Cite each note with [[note-path]] (as of ${dateLabel}) so the operator`,
+          "  always sees the vintage. The wikilink resolves to today's path;",
+          "  the suffix tells them the cited chunk's date.",
+          `- "Now" / "today" in your reasoning refers to ${dateLabel}, not the`,
+          '  wall-clock today. References to current-state work belong in a',
+          "  separate, non-time-travel turn.",
+          "- Writes are blocked at the tool layer — you can't edit the past.",
+          '  If asked to make a change, suggest the operator switch modes',
+          '  first.',
+        ].join('\n');
       }
       if (mode === 'negotiate') {
         return [

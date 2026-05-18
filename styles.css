@@ -663,3 +663,47 @@
   border-radius: 3px;
   font-size: 0.85em;
 }
+
+/* Phase 16 (v1.10.0) — Time-travel banner per ADR-037 D6. */
+.sagittarius-timetravel-banner {
+  margin: 0.4em 0.8em 0;
+  padding: 0.4em 0.6em;
+  background: var(--background-secondary);
+  border-left: 3px solid var(--interactive-accent);
+  border-radius: 3px;
+  font-size: 0.85em;
+}
+
+/* Phase 16 (v1.10.0) — Snapshot picker modal per ADR-037 D6. */
+.sagittarius-snapshot-picker .sagittarius-snapshot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25em;
+  margin: 0.8em 0;
+}
+.sagittarius-snapshot-picker .sagittarius-snapshot-row {
+  display: flex;
+}
+.sagittarius-snapshot-picker .sagittarius-snapshot-pick {
+  flex: 1;
+  text-align: left;
+  padding: 0.6em 0.8em;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.sagittarius-snapshot-picker .sagittarius-snapshot-pick:hover {
+  background: var(--background-modifier-hover);
+}
+.sagittarius-snapshot-picker .sagittarius-snapshot-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5em;
+  margin-top: 0.8em;
+}
+.sagittarius-snapshot-picker .sagittarius-snapshot-empty {
+  margin: 0.6em 0;
+  color: var(--text-muted);
+  font-size: 0.9em;
+}

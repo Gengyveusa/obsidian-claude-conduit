@@ -21,6 +21,14 @@ export interface QueryUnifiedOpts {
   sourceDb?: 'self' | 'corpus' | 'both';
   /** Restrict to notes under this folder path. */
   filterPathPrefix?: string;
+  /**
+   * Phase 16 (v1.10.0) — time-travel scope per ADR-037 D2. When set,
+   * scores against the snapshot's chunks instead of current-state.
+   * Applies to the self-engine only — the corpus engine (read-only,
+   * external) is always queried in current state. `undefined` or
+   * `null` = current-state (back-compat default).
+   */
+  commitSha?: string | null;
 }
 
 const DEFAULT_LIMIT = 10;
@@ -85,11 +93,21 @@ export class RetrievalLayer {
 
     const results: QueryResult[] = [];
     if (sourceDb === 'self' || sourceDb === 'both') {
-      results.push(...this.scoreEngine(this.opts.selfEngine, queryVec, opts.filterPathPrefix, 'self'));
+      results.push(
+        ...this.scoreEngine(
+          this.opts.selfEngine,
+          queryVec,
+          opts.filterPathPrefix,
+          'self',
+          opts.commitSha ?? null,
+        ),
+      );
     }
     if ((sourceDb === 'corpus' || sourceDb === 'both') && this.opts.corpusEngine) {
+      // Corpus is always queried in current-state — it's an external
+      // read-only index without snapshot semantics per ADR-037 D2.
       results.push(
-        ...this.scoreEngine(this.opts.corpusEngine, queryVec, opts.filterPathPrefix, 'corpus'),
+        ...this.scoreEngine(this.opts.corpusEngine, queryVec, opts.filterPathPrefix, 'corpus', null),
       );
     }
 
@@ -102,8 +120,14 @@ export class RetrievalLayer {
     queryVec: Float32Array,
     filterPathPrefix: string | undefined,
     sourceDb: 'self' | 'corpus',
+    commitSha: string | null,
   ): QueryResult[] {
-    const filter = filterPathPrefix ? { pathPrefix: filterPathPrefix } : undefined;
+    const filter: { pathPrefix?: string; commitSha?: string | null } = {
+      commitSha,
+    };
+    if (filterPathPrefix !== undefined) {
+      filter.pathPrefix = filterPathPrefix;
+    }
     const chunks = engine.allChunks(filter);
     const out: QueryResult[] = [];
     for (const chunk of chunks) {

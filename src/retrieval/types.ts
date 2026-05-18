@@ -13,6 +13,14 @@ export interface Chunk {
   chunkIndex: number;
   text: string;
   embedding: Float32Array;
+  /**
+   * Phase 16 (v1.10.0) — time-travel commit SHA per ADR-037 D2. `null`
+   * (or omitted) means the row is the current-state index — the
+   * back-compat default that every pre-Phase-16 row carries. A non-
+   * null string identifies the historical snapshot the row belongs
+   * to (one row per `(notePath, chunkIndex, commit_sha)` tuple).
+   */
+  commitSha?: string | null;
 }
 
 /** A row in the `notes` table — one note's metadata. */

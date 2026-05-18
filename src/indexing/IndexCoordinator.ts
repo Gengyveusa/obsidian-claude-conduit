@@ -53,6 +53,20 @@ export class IndexCoordinator {
   }
 
   /**
+   * Phase 16 (v1.10.0) — persist the current engine buffer without
+   * running an indexer build. Used by `runSnapshotForTimeTravel` to
+   * make new snapshot rows durable across plugin reloads. The snapshot
+   * indexer writes directly to the engine (no `build()` call), so the
+   * normal `runBuild` save path doesn't fire.
+   *
+   * @example await coord.flushNow();
+   */
+  async flushNow(): Promise<void> {
+    const buffer = this.opts.engine.export();
+    await this.opts.persistence.save(buffer);
+  }
+
+  /**
    * Run a build (or return the in-flight promise if one is already
    * running). On `rebuild: true`, waits for any in-flight incremental
    * build to finish, then runs a fresh full rebuild.
