@@ -134,7 +134,7 @@ describe('ConduitAgent negotiate-mode prompt', () => {
         queryCalls.push(query);
         return Promise.resolve([]);
       },
-    } as unknown as ConduitAgentDeps['retrieval'];
+    } as unknown as NonNullable<ConduitAgentDeps['retrieval']>;
     const agent = new ConduitAgent(deps, settings);
     await agent.chat('My thesis is X.', [], 'negotiate');
     expect(queryCalls).toEqual(['My thesis is X.']);
@@ -149,7 +149,7 @@ describe('ConduitAgent negotiate-mode prompt', () => {
         queryCalls.push(query);
         return Promise.resolve([]);
       },
-    } as unknown as ConduitAgentDeps['retrieval'];
+    } as unknown as NonNullable<ConduitAgentDeps['retrieval']>;
     const agent = new ConduitAgent(deps, settings);
     await agent.chat('hi', [], 'chat');
     expect(queryCalls).toEqual([]);
