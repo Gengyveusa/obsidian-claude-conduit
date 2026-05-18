@@ -326,6 +326,29 @@ export interface SagittariusSettings {
    */
   chatNotesEnabled: boolean;
 
+  // Phase 14 (v1.7.0) — daily briefing per ADR-035
+  /**
+   * Master switch for the daily briefing per ADR-035 D7. Opt-in
+   * (default false). When on, the plugin checks on each load whether
+   * today's briefing exists; if not, fires generation. The
+   * `Sagittarius: Generate today's briefing` command works as a
+   * manual override regardless of this flag.
+   */
+  briefingEnabled: boolean;
+  /**
+   * OQ3 hedge from ADR-035 — cap items per section to keep the
+   * briefing scannable in big vaults. Default 10.
+   */
+  briefingMaxItemsPerSection: number;
+  /**
+   * Per-day idempotency state per ADR-035 D2. Tracks the YYYY-MM-DD
+   * of the most-recent briefing generation so plugin restarts within
+   * the same day don't re-fire. Operator never sets this directly;
+   * the scheduler writes it. Empty string = no briefing has fired
+   * yet on this install.
+   */
+  briefingLastDay: string;
+
   // Phase 9.x (v1.4.0) — proactive draft suggestions per ADR-026 D8(b)
   /**
    * Minimum tag-cluster size before `Sagittarius: Suggest drafts`
@@ -437,6 +460,10 @@ export const DEFAULT_SETTINGS: SagittariusSettings = {
   journalModel: 'claude-sonnet-4-6',
 
   chatNotesEnabled: false,
+
+  briefingEnabled: false,
+  briefingMaxItemsPerSection: 10,
+  briefingLastDay: '',
 
   draftSuggestionMinNotes: 5,
 

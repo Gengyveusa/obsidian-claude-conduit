@@ -4,6 +4,18 @@ Versioning is semver-ish: minor bumps signal new user-facing capability,
 patch bumps are polish + bug fixes within a phase. Each phase has a plan
 ADR (numbered) and a close ADR (retrospective) — see `docs/`.
 
+## [1.7.0] — 2026-05-18 (Phase 14 MVP — Daily briefing — ADR-035)
+
+- **`Sagittarius: Generate today's briefing`** — new command. Aggregates curator + activity + drafts + synthesis opportunities + memory state + journal "open threads" into one scannable digest written to `_briefings/<YYYY-MM-DD>.md` via the existing diff card.
+- **First-launch-of-the-day scheduler** — when `briefingEnabled` is on and today's briefing doesn't exist yet, generation fires automatically on plugin load. Per-day idempotency via `briefingLastDay` settings field.
+- **Six fixed sections** per ADR-035 D3: What changed yesterday / Curator suggestions / Drafting backlog / Synthesis opportunities / Memory state / Open threads from journals.
+- **Severity-sorted curator findings** with emoji badges (🔴 / 🟠 / 🟡 / ⚪).
+- New `src/briefing/` package: `paths.ts` (paths + date extraction), `BriefingComposer.ts` (pure renderer), `journalThreads.ts` (pulls "Open threads:" bullets from recent journals).
+- 3 new settings: `briefingEnabled` (opt-in, default false per ADR-024 lesson 1), `briefingMaxItemsPerSection` (default 10), `briefingLastDay` (idempotency state — operator never sets).
+- **Zero new write tools** — composes existing `create_note`. **Seven phases of this discipline in a row.**
+- Editorial summary (D4) + status bar pill (D6) deferred to v1.7.1.
+- Tests: +32 (1172 total).
+
 ## [1.6.0] — 2026-05-16 (Phase 13 MVP — Conversational notes — ADR-034)
 
 - **`Sagittarius: Save this conversation as a note`** — new command. Reads ChatView history (Phase 12 substrate), renders a Q&A markdown note with H2 headers per turn, proposes `create_note('_chats/<YYYY-MM-DD>/<slug>.md', content)` via the existing diff card.
